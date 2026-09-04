@@ -867,6 +867,230 @@ func TestCompleteSubscriptionOrder_WaffoPancakeUsesImmutableEntitlementSnapshot(
 	assert.False(t, subscription.AllowWalletOverflow)
 }
 
+func insertStripeExpectedSubscriptionOrderForPaymentGuardTest(t *testing.T, tradeNo string, userID int, plan *SubscriptionPlan) {
+	t.Helper()
+	order := &SubscriptionOrder{
+		UserId:                     userID,
+		PlanId:                     plan.Id,
+		Money:                      9.99,
+		PaymentExpectationVersion:  StripeSubscriptionPaymentExpectationVersion,
+		ExpectedAmount:             9.99,
+		ExpectedAmountUnit:         999,
+		ExpectedCurrency:           "USD",
+		ExpectedSessionID:          "cs_sub_expected",
+		ExpectedBindingToken:       "stripe_sub_binding_expected",
+		EntitlementSnapshotVersion: SubscriptionEntitlementSnapshotVersion,
+		EntitlementSnapshot:        entitlementSnapshotForPaymentGuardTest(t, plan),
+		TradeNo:                    tradeNo,
+		PaymentMethod:              PaymentMethodStripe,
+		PaymentProvider:            PaymentProviderStripe,
+		Status:                     common.TopUpStatusPending,
+		CreateTime:                 time.Now().Unix(),
+	}
+	require.NoError(t, order.Insert())
+}
+
+func stripeSubscriptionSettlementForPaymentGuardTest() SubscriptionPaymentSettlement {
+	return SubscriptionPaymentSettlement{
+		AmountUnit:   999,
+		Currency:     "usd",
+		SessionID:    "cs_sub_expected",
+		BindingToken: "stripe_sub_binding_expected",
+	}
+}
+
+func TestCompleteSubscriptionOrder_StripeSettlementMatchUsesImmutableSnapshotAndIsIdempotent(t *testing.T) {
+	truncateTables(t)
+	const userID = 208
+	const tradeNo = "sub-stripe-settlement-match"
+	insertUserForPaymentGuardTest(t, userID, 0)
+	plan := insertSubscriptionPlanForPaymentGuardTest(t, 306)
+	allowOverflow := false
+	plan.Title = "Purchased Stripe Plan"
+	plan.DurationUnit = SubscriptionDurationCustom
+	plan.DurationValue = 0
+	plan.CustomSeconds = 7200
+	plan.TotalAmount = 2345
+	plan.QuotaResetPeriod = SubscriptionResetCustom
+	plan.QuotaResetCustomSeconds = 600
+	plan.UpgradeGroup = "vip"
+	plan.DowngradeGroup = "default"
+	plan.AllowWalletOverflow = &allowOverflow
+	plan.MaxPurchasePerUser = 3
+	require.NoError(t, DB.Save(plan).Error)
+	insertStripeExpectedSubscriptionOrderForPaymentGuardTest(t, tradeNo, userID, plan)
+
+	require.NoError(t, DB.Delete(plan).Error)
+	settlement := stripeSubscriptionSettlementForPaymentGuardTest()
+	require.NoError(t, CompleteSubscriptionOrder(tradeNo, "{}", PaymentProviderStripe, "", settlement))
+
+	stored := GetSubscriptionOrderByTradeNo(tradeNo)
+	require.NotNil(t, stored)
+	assert.Equal(t, common.TopUpStatusSuccess, stored.Status)
+	assert.Equal(t, "cs_sub_expected", stored.ExpectedSessionID)
+	assert.Equal(t, int64(1), countUserSubscriptionsForPaymentGuardTest(t, userID))
+	var subscription UserSubscription
+	require.NoError(t, DB.Where("user_id = ?", userID).First(&subscription).Error)
+	assert.Equal(t, int64(2345), subscription.AmountTotal)
+	assert.Equal(t, int64(7200), subscription.EndTime-subscription.StartTime)
+	assert.Equal(t, int64(600), subscription.NextResetTime-subscription.StartTime)
+	assert.Equal(t, "vip", subscription.UpgradeGroup)
+	assert.Equal(t, "default", subscription.DowngradeGroup)
+	assert.False(t, subscription.AllowWalletOverflow)
+
+	require.NoError(t, CompleteSubscriptionOrder(tradeNo, "{}", PaymentProviderStripe, "", settlement))
+	assert.Equal(t, int64(1), countUserSubscriptionsForPaymentGuardTest(t, userID))
+}
+
+func TestCompleteSubscriptionOrder_StripeReplayWithDifferentEvidenceIsIdempotent(t *testing.T) {
+	truncateTables(t)
+	const userID = 212
+	const tradeNo = "sub-stripe-idempotent-replay"
+	insertUserForPaymentGuardTest(t, userID, 0)
+	plan := insertSubscriptionPlanForPaymentGuardTest(t, 310)
+	insertStripeExpectedSubscriptionOrderForPaymentGuardTest(t, tradeNo, userID, plan)
+	settlement := stripeSubscriptionSettlementForPaymentGuardTest()
+	require.NoError(t, CompleteSubscriptionOrder(tradeNo, "{}", PaymentProviderStripe, "", settlement))
+
+	settlement.SessionID = "cs_sub_other"
+	settlement.BindingToken = "stripe_sub_binding_other"
+	settlement.AmountUnit = 1
+	settlement.Currency = "CNY"
+	require.NoError(t, CompleteSubscriptionOrder(tradeNo, "{}", PaymentProviderStripe, "", settlement))
+	assert.Equal(t, int64(1), countUserSubscriptionsForPaymentGuardTest(t, userID))
+}
+
+func TestCompleteSubscriptionOrder_StripeRejectsUnexpectedSettlement(t *testing.T) {
+	testCases := []struct {
+		name       string
+		configure  func(*SubscriptionOrder)
+		settlement SubscriptionPaymentSettlement
+		expected   error
+	}{
+		{
+			name:       "legacy expectation",
+			configure:  func(order *SubscriptionOrder) { order.PaymentExpectationVersion = 0 },
+			settlement: stripeSubscriptionSettlementForPaymentGuardTest(),
+			expected:   ErrLegacyPaymentExpectation,
+		},
+		{
+			name:       "unsupported expectation version",
+			configure:  func(order *SubscriptionOrder) { order.PaymentExpectationVersion++ },
+			settlement: stripeSubscriptionSettlementForPaymentGuardTest(),
+			expected:   ErrPaymentExpectationInvalid,
+		},
+		{
+			name:       "missing event session",
+			settlement: SubscriptionPaymentSettlement{AmountUnit: 999, Currency: "USD", BindingToken: "stripe_sub_binding_expected"},
+			expected:   ErrPaymentExpectationInvalid,
+		},
+		{
+			name:       "different session",
+			settlement: SubscriptionPaymentSettlement{AmountUnit: 999, Currency: "USD", SessionID: "cs_sub_other", BindingToken: "stripe_sub_binding_expected"},
+			expected:   ErrPaymentSettlementMismatch,
+		},
+		{
+			name:       "different binding token",
+			settlement: SubscriptionPaymentSettlement{AmountUnit: 999, Currency: "USD", SessionID: "cs_sub_expected", BindingToken: "stripe_sub_binding_other"},
+			expected:   ErrPaymentSettlementMismatch,
+		},
+		{
+			name:       "different amount",
+			settlement: SubscriptionPaymentSettlement{AmountUnit: 1000, Currency: "USD", SessionID: "cs_sub_expected", BindingToken: "stripe_sub_binding_expected"},
+			expected:   ErrPaymentSettlementMismatch,
+		},
+		{
+			name:       "different currency",
+			settlement: SubscriptionPaymentSettlement{AmountUnit: 999, Currency: "CNY", SessionID: "cs_sub_expected", BindingToken: "stripe_sub_binding_expected"},
+			expected:   ErrPaymentSettlementMismatch,
+		},
+		{
+			name:       "missing entitlement snapshot",
+			configure:  func(order *SubscriptionOrder) { order.EntitlementSnapshot = "" },
+			settlement: stripeSubscriptionSettlementForPaymentGuardTest(),
+			expected:   ErrPaymentExpectationInvalid,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			truncateTables(t)
+			const userID = 209
+			const tradeNo = "sub-stripe-settlement-reject"
+			insertUserForPaymentGuardTest(t, userID, 0)
+			plan := insertSubscriptionPlanForPaymentGuardTest(t, 307)
+			insertStripeExpectedSubscriptionOrderForPaymentGuardTest(t, tradeNo, userID, plan)
+			if tc.configure != nil {
+				order := GetSubscriptionOrderByTradeNo(tradeNo)
+				require.NotNil(t, order)
+				tc.configure(order)
+				require.NoError(t, order.Update())
+			}
+
+			err := CompleteSubscriptionOrder(tradeNo, "{}", PaymentProviderStripe, "", tc.settlement)
+			require.ErrorIs(t, err, tc.expected)
+			stored := GetSubscriptionOrderByTradeNo(tradeNo)
+			require.NotNil(t, stored)
+			assert.Equal(t, common.TopUpStatusPending, stored.Status)
+			assert.Equal(t, int64(0), countUserSubscriptionsForPaymentGuardTest(t, userID))
+			assert.Nil(t, GetTopUpByTradeNo(tradeNo))
+		})
+	}
+}
+
+func TestCompleteSubscriptionOrder_StripeRecoversSessionOnlyAfterFullSettlementMatch(t *testing.T) {
+	truncateTables(t)
+	const userID = 210
+	const tradeNo = "sub-stripe-session-recovery"
+	insertUserForPaymentGuardTest(t, userID, 0)
+	plan := insertSubscriptionPlanForPaymentGuardTest(t, 308)
+	insertStripeExpectedSubscriptionOrderForPaymentGuardTest(t, tradeNo, userID, plan)
+	order := GetSubscriptionOrderByTradeNo(tradeNo)
+	require.NotNil(t, order)
+	order.ExpectedSessionID = ""
+	require.NoError(t, order.Update())
+
+	mismatch := stripeSubscriptionSettlementForPaymentGuardTest()
+	mismatch.SessionID = "cs_sub_recovered"
+	mismatch.AmountUnit++
+	require.ErrorIs(t, CompleteSubscriptionOrder(tradeNo, "{}", PaymentProviderStripe, "", mismatch), ErrPaymentSettlementMismatch)
+	stored := GetSubscriptionOrderByTradeNo(tradeNo)
+	require.NotNil(t, stored)
+	assert.Empty(t, stored.ExpectedSessionID)
+	assert.Equal(t, common.TopUpStatusPending, stored.Status)
+	assert.Zero(t, countUserSubscriptionsForPaymentGuardTest(t, userID))
+
+	settlement := stripeSubscriptionSettlementForPaymentGuardTest()
+	settlement.SessionID = "cs_sub_recovered"
+	require.NoError(t, CompleteSubscriptionOrder(tradeNo, "{}", PaymentProviderStripe, "", settlement))
+	stored = GetSubscriptionOrderByTradeNo(tradeNo)
+	require.NotNil(t, stored)
+	assert.Equal(t, "cs_sub_recovered", stored.ExpectedSessionID)
+	assert.Equal(t, common.TopUpStatusSuccess, stored.Status)
+	assert.Equal(t, int64(1), countUserSubscriptionsForPaymentGuardTest(t, userID))
+}
+
+func TestSetStripeSubscriptionOrderExpectedSessionIDEnforcesImmutableExpectation(t *testing.T) {
+	truncateTables(t)
+	const userID = 211
+	const tradeNo = "sub-stripe-session-bind"
+	insertUserForPaymentGuardTest(t, userID, 0)
+	plan := insertSubscriptionPlanForPaymentGuardTest(t, 309)
+	insertStripeExpectedSubscriptionOrderForPaymentGuardTest(t, tradeNo, userID, plan)
+	order := GetSubscriptionOrderByTradeNo(tradeNo)
+	require.NotNil(t, order)
+	order.ExpectedSessionID = ""
+	require.NoError(t, order.Update())
+
+	require.NoError(t, SetStripeSubscriptionOrderExpectedSessionID(tradeNo, "cs_sub_bound"))
+	require.NoError(t, SetStripeSubscriptionOrderExpectedSessionID(tradeNo, "cs_sub_bound"))
+	require.ErrorIs(t, SetStripeSubscriptionOrderExpectedSessionID(tradeNo, "cs_sub_other"), ErrPaymentSettlementMismatch)
+	stored := GetSubscriptionOrderByTradeNo(tradeNo)
+	require.NotNil(t, stored)
+	assert.Equal(t, "cs_sub_bound", stored.ExpectedSessionID)
+	assert.Equal(t, common.TopUpStatusPending, stored.Status)
+}
+
 func TestExpireSubscriptionOrder_RejectsMismatchedPaymentProvider(t *testing.T) {
 	truncateTables(t)
 

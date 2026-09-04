@@ -395,6 +395,9 @@ func TestGenStripeCheckoutSession_UsesExistingCustomerAndRejectsInvalidQuote(t *
 func setupStripeWebhookTest(t *testing.T) *gorm.DB {
 	t.Helper()
 
+	// Stripe controller fixtures use fresh SQLite databases. Invalidate the
+	// process-wide plan cache so a previous fixture cannot leak plan ID 1.
+	model.InvalidateSubscriptionPlanCache(1)
 	previousDB := model.DB
 	previousLogDB := model.LOG_DB
 	previousMainDatabaseType := common.MainDatabaseType()
@@ -422,6 +425,7 @@ func setupStripeWebhookTest(t *testing.T) *gorm.DB {
 	confirmPaymentComplianceForTest(t)
 
 	t.Cleanup(func() {
+		model.InvalidateSubscriptionPlanCache(1)
 		model.DB = previousDB
 		model.LOG_DB = previousLogDB
 		common.SetDatabaseTypes(previousMainDatabaseType, previousLogDatabaseType)
@@ -442,11 +446,11 @@ func signedStripeWebhookRequest(t *testing.T, payload []byte) *http.Request {
 	return request
 }
 
-func stripeCheckoutCompletedPayload(tradeNo string, sessionID string, bindingToken string, amountUnit int64, currency string, paymentStatus string) []byte {
+func stripeCheckoutSessionPayloadWithType(eventType string, tradeNo string, sessionID string, metadataKey string, bindingToken string, amountUnit int64, currency string, paymentStatus string) []byte {
 	return []byte(fmt.Sprintf(`{
 		"id":"evt_test",
 		"object":"event",
-		"type":"checkout.session.completed",
+		"type":%q,
 		"data":{"object":{
 			"id":%q,
 			"object":"checkout.session",
@@ -458,7 +462,32 @@ func stripeCheckoutCompletedPayload(tradeNo string, sessionID string, bindingTok
 			"amount_total":%d,
 			"currency":%q
 		}}
-	}`, sessionID, tradeNo, stripeWalletBindingMetadataKey, bindingToken, paymentStatus, amountUnit, currency))
+	}`, eventType, sessionID, tradeNo, metadataKey, bindingToken, paymentStatus, amountUnit, currency))
+}
+
+func stripeCheckoutCompletedPayloadWithMetadataKey(tradeNo string, sessionID string, metadataKey string, bindingToken string, amountUnit int64, currency string, paymentStatus string) []byte {
+	return stripeCheckoutSessionPayloadWithType(
+		string(stripe.EventTypeCheckoutSessionCompleted),
+		tradeNo,
+		sessionID,
+		metadataKey,
+		bindingToken,
+		amountUnit,
+		currency,
+		paymentStatus,
+	)
+}
+
+func stripeCheckoutCompletedPayload(tradeNo string, sessionID string, bindingToken string, amountUnit int64, currency string, paymentStatus string) []byte {
+	return stripeCheckoutCompletedPayloadWithMetadataKey(
+		tradeNo,
+		sessionID,
+		stripeWalletBindingMetadataKey,
+		bindingToken,
+		amountUnit,
+		currency,
+		paymentStatus,
+	)
 }
 
 func invokeStripeWebhook(request *http.Request) *httptest.ResponseRecorder {
@@ -678,6 +707,413 @@ func TestIsRetryableStripeWebhookError(t *testing.T) {
 			assert.Equal(t, tc.retryable, isRetryableStripeWebhookError(tc.err))
 		})
 	}
+}
+
+func TestStripeSubscriptionRequest_PersistsImmutableExpectationBeforeCheckout(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	db := setupStripeWebhookTest(t)
+	previousCreateSession := createStripeCheckoutSession
+	t.Cleanup(func() { createStripeCheckoutSession = previousCreateSession })
+
+	allowOverflow := false
+	plan := &model.SubscriptionPlan{
+		Title:                   "Stripe Checkout Plan",
+		PriceAmount:             9.99,
+		Currency:                "USD",
+		DurationUnit:            model.SubscriptionDurationCustom,
+		CustomSeconds:           7200,
+		Enabled:                 true,
+		StripePriceId:           "price_subscription_test",
+		TotalAmount:             2345,
+		QuotaResetPeriod:        model.SubscriptionResetCustom,
+		QuotaResetCustomSeconds: 600,
+		UpgradeGroup:            "vip",
+		DowngradeGroup:          "default",
+		AllowWalletOverflow:     &allowOverflow,
+		MaxPurchasePerUser:      3,
+	}
+	require.NoError(t, db.Create(plan).Error)
+	user := &model.User{
+		Id:       701,
+		Username: "stripe-subscription-checkout-user",
+		Password: "unused",
+		Status:   common.UserStatusEnabled,
+		Group:    "default",
+		Email:    "subscription@example.invalid",
+	}
+	require.NoError(t, db.Create(user).Error)
+
+	var pendingBeforeCheckout model.SubscriptionOrder
+	var checkoutParams *stripe.CheckoutSessionParams
+	createStripeCheckoutSession = func(params *stripe.CheckoutSessionParams) (*stripe.CheckoutSession, error) {
+		checkoutParams = params
+		require.NoError(t, db.Where("user_id = ?", user.Id).First(&pendingBeforeCheckout).Error)
+		return &stripe.CheckoutSession{ID: "cs_subscription_checkout", URL: "https://checkout.example.test/subscription"}, nil
+	}
+
+	recorder := httptest.NewRecorder()
+	context, _ := gin.CreateTestContext(recorder)
+	context.Set("id", user.Id)
+	context.Request = httptest.NewRequest(http.MethodPost, "/api/subscription/stripe/pay", bytes.NewReader([]byte(fmt.Sprintf(`{"plan_id":%d}`, plan.Id))))
+	context.Request.Header.Set("Content-Type", "application/json")
+	SubscriptionRequestStripePay(context)
+
+	require.NotNil(t, checkoutParams)
+	assert.Equal(t, common.TopUpStatusPending, pendingBeforeCheckout.Status)
+	assert.Equal(t, model.StripeSubscriptionPaymentExpectationVersion, pendingBeforeCheckout.PaymentExpectationVersion)
+	assert.InDelta(t, 9.99, pendingBeforeCheckout.ExpectedAmount, 0.000001)
+	assert.Equal(t, int64(999), pendingBeforeCheckout.ExpectedAmountUnit)
+	assert.Equal(t, "USD", pendingBeforeCheckout.ExpectedCurrency)
+	assert.Empty(t, pendingBeforeCheckout.ExpectedSessionID)
+	require.Len(t, pendingBeforeCheckout.ExpectedBindingToken, stripeSubscriptionBindingTokenLength)
+	assert.Equal(t, model.SubscriptionEntitlementSnapshotVersion, pendingBeforeCheckout.EntitlementSnapshotVersion)
+	assert.NotEmpty(t, pendingBeforeCheckout.EntitlementSnapshot)
+	assert.Equal(t, pendingBeforeCheckout.TradeNo, stripe.StringValue(checkoutParams.ClientReferenceID))
+	assert.Equal(t, pendingBeforeCheckout.TradeNo, stripe.StringValue(checkoutParams.Params.IdempotencyKey))
+	assert.Equal(t, pendingBeforeCheckout.ExpectedBindingToken, checkoutParams.Metadata[stripeSubscriptionBindingMetadataKey])
+	assert.Equal(t, string(stripe.CheckoutSessionModeSubscription), stripe.StringValue(checkoutParams.Mode))
+	assert.False(t, stripe.BoolValue(checkoutParams.AllowPromotionCodes))
+	require.Len(t, checkoutParams.LineItems, 1)
+	assert.Equal(t, plan.StripePriceId, stripe.StringValue(checkoutParams.LineItems[0].Price))
+	assert.Equal(t, int64(1), stripe.Int64Value(checkoutParams.LineItems[0].Quantity))
+	assert.Equal(t, user.Email, stripe.StringValue(checkoutParams.CustomerEmail))
+	assert.Equal(t, string(stripe.CheckoutSessionCustomerCreationAlways), stripe.StringValue(checkoutParams.CustomerCreation))
+
+	persisted := model.GetSubscriptionOrderByTradeNo(pendingBeforeCheckout.TradeNo)
+	require.NotNil(t, persisted)
+	assert.Equal(t, "cs_subscription_checkout", persisted.ExpectedSessionID)
+	assert.Equal(t, pendingBeforeCheckout.ExpectedBindingToken, persisted.ExpectedBindingToken)
+	assert.Equal(t, http.StatusOK, recorder.Code)
+	var response struct {
+		Message string `json:"message"`
+		Data    struct {
+			PayLink string `json:"pay_link"`
+		} `json:"data"`
+	}
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &response))
+	assert.Equal(t, "success", response.Message)
+	assert.Equal(t, "https://checkout.example.test/subscription", response.Data.PayLink)
+	assert.NotContains(t, recorder.Body.String(), pendingBeforeCheckout.ExpectedBindingToken)
+}
+
+func TestStripeSubscriptionRequest_RejectsInvalidCheckoutSession(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	db := setupStripeWebhookTest(t)
+	previousCreateSession := createStripeCheckoutSession
+	t.Cleanup(func() { createStripeCheckoutSession = previousCreateSession })
+
+	plan := &model.SubscriptionPlan{
+		Title:            "Stripe Invalid Session Plan",
+		PriceAmount:      9.99,
+		Currency:         "USD",
+		DurationUnit:     model.SubscriptionDurationMonth,
+		DurationValue:    1,
+		Enabled:          true,
+		StripePriceId:    "price_invalid_session",
+		TotalAmount:      100,
+		QuotaResetPeriod: model.SubscriptionResetNever,
+	}
+	require.NoError(t, db.Create(plan).Error)
+	user := &model.User{
+		Id:       703,
+		Username: "stripe-invalid-session-user",
+		Password: "unused",
+		Status:   common.UserStatusEnabled,
+		Group:    "default",
+	}
+	require.NoError(t, db.Create(user).Error)
+	createStripeCheckoutSession = func(*stripe.CheckoutSessionParams) (*stripe.CheckoutSession, error) {
+		return &stripe.CheckoutSession{URL: "https://checkout.example.test/missing-id"}, nil
+	}
+
+	recorder := httptest.NewRecorder()
+	context, _ := gin.CreateTestContext(recorder)
+	context.Set("id", user.Id)
+	context.Request = httptest.NewRequest(http.MethodPost, "/api/subscription/stripe/pay", bytes.NewReader([]byte(fmt.Sprintf(`{"plan_id":%d}`, plan.Id))))
+	context.Request.Header.Set("Content-Type", "application/json")
+	SubscriptionRequestStripePay(context)
+
+	assert.Equal(t, http.StatusOK, recorder.Code)
+	assert.Contains(t, recorder.Body.String(), `"message":"error"`)
+	var order model.SubscriptionOrder
+	require.NoError(t, db.Where("user_id = ?", user.Id).First(&order).Error)
+	assert.Equal(t, common.TopUpStatusPending, order.Status)
+	assert.Empty(t, order.ExpectedSessionID)
+	assert.NotEmpty(t, order.ExpectedBindingToken)
+	assert.Zero(t, func() int64 {
+		var count int64
+		require.NoError(t, db.Model(&model.UserSubscription{}).Where("user_id = ?", user.Id).Count(&count).Error)
+		return count
+	}())
+}
+
+func insertStripeWebhookSubscriptionOrder(t *testing.T, db *gorm.DB, tradeNo string, sessionID string) int {
+	t.Helper()
+	const userID = 702
+	user := &model.User{
+		Id:       userID,
+		Username: "stripe-subscription-webhook-user",
+		Password: "unused",
+		Status:   common.UserStatusEnabled,
+		Group:    "default",
+	}
+	require.NoError(t, db.Create(user).Error)
+	allowOverflow := false
+	plan := &model.SubscriptionPlan{
+		Title:                   "Stripe Purchased Plan",
+		PriceAmount:             9.99,
+		Currency:                "USD",
+		DurationUnit:            model.SubscriptionDurationCustom,
+		CustomSeconds:           7200,
+		Enabled:                 true,
+		StripePriceId:           "price_subscription_webhook",
+		TotalAmount:             2345,
+		QuotaResetPeriod:        model.SubscriptionResetCustom,
+		QuotaResetCustomSeconds: 600,
+		UpgradeGroup:            "vip",
+		DowngradeGroup:          "default",
+		AllowWalletOverflow:     &allowOverflow,
+		MaxPurchasePerUser:      3,
+	}
+	require.NoError(t, db.Create(plan).Error)
+	snapshot, err := model.NewSubscriptionEntitlementSnapshot(plan)
+	require.NoError(t, err)
+	snapshotJSON, err := snapshot.Marshal()
+	require.NoError(t, err)
+	order := &model.SubscriptionOrder{
+		UserId:                     userID,
+		PlanId:                     plan.Id,
+		Money:                      9.99,
+		PaymentExpectationVersion:  model.StripeSubscriptionPaymentExpectationVersion,
+		ExpectedAmount:             9.99,
+		ExpectedAmountUnit:         999,
+		ExpectedCurrency:           "USD",
+		ExpectedSessionID:          sessionID,
+		ExpectedBindingToken:       stripeWebhookBindingToken,
+		EntitlementSnapshotVersion: model.SubscriptionEntitlementSnapshotVersion,
+		EntitlementSnapshot:        snapshotJSON,
+		TradeNo:                    tradeNo,
+		PaymentMethod:              model.PaymentMethodStripe,
+		PaymentProvider:            model.PaymentProviderStripe,
+		Status:                     common.TopUpStatusPending,
+		CreateTime:                 time.Now().Unix(),
+	}
+	require.NoError(t, order.Insert())
+
+	plan.Title = "Mutated Plan"
+	plan.CustomSeconds = 60
+	plan.TotalAmount = 1
+	plan.QuotaResetPeriod = model.SubscriptionResetNever
+	plan.QuotaResetCustomSeconds = 0
+	plan.UpgradeGroup = ""
+	plan.DowngradeGroup = ""
+	allowOverflow = true
+	plan.AllowWalletOverflow = &allowOverflow
+	require.NoError(t, db.Save(plan).Error)
+	return userID
+}
+
+func TestStripeWebhook_SubscriptionMatchingSettlementUsesSnapshotExactlyOnce(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	db := setupStripeWebhookTest(t)
+	const tradeNo = "stripe-subscription-webhook-match"
+	const sessionID = "cs_subscription_webhook"
+	userID := insertStripeWebhookSubscriptionOrder(t, db, tradeNo, "")
+	payload := stripeCheckoutCompletedPayloadWithMetadataKey(
+		tradeNo,
+		sessionID,
+		stripeSubscriptionBindingMetadataKey,
+		stripeWebhookBindingToken,
+		999,
+		"usd",
+		"paid",
+	)
+
+	response := invokeStripeWebhook(signedStripeWebhookRequest(t, payload))
+	assert.Equal(t, http.StatusOK, response.Code)
+	stored := model.GetSubscriptionOrderByTradeNo(tradeNo)
+	require.NotNil(t, stored)
+	assert.Equal(t, common.TopUpStatusSuccess, stored.Status)
+	assert.Equal(t, sessionID, stored.ExpectedSessionID)
+	var subscriptions []model.UserSubscription
+	require.NoError(t, db.Where("user_id = ?", userID).Find(&subscriptions).Error)
+	require.Len(t, subscriptions, 1)
+	assert.Equal(t, int64(2345), subscriptions[0].AmountTotal)
+	assert.Equal(t, int64(7200), subscriptions[0].EndTime-subscriptions[0].StartTime)
+	assert.Equal(t, int64(600), subscriptions[0].NextResetTime-subscriptions[0].StartTime)
+	assert.Equal(t, "vip", subscriptions[0].UpgradeGroup)
+	assert.Equal(t, "default", subscriptions[0].DowngradeGroup)
+	assert.False(t, subscriptions[0].AllowWalletOverflow)
+
+	replay := invokeStripeWebhook(signedStripeWebhookRequest(t, payload))
+	assert.Equal(t, http.StatusOK, replay.Code)
+	require.NoError(t, db.Where("user_id = ?", userID).Find(&subscriptions).Error)
+	assert.Len(t, subscriptions, 1)
+}
+
+func TestStripeWebhook_SubscriptionAsyncPaymentEvents(t *testing.T) {
+	t.Run("successful delayed payment settles", func(t *testing.T) {
+		gin.SetMode(gin.TestMode)
+		db := setupStripeWebhookTest(t)
+		const tradeNo = "stripe-subscription-webhook-async-success"
+		const sessionID = "cs_subscription_async_success"
+		userID := insertStripeWebhookSubscriptionOrder(t, db, tradeNo, sessionID)
+		payload := stripeCheckoutSessionPayloadWithType(
+			string(stripe.EventTypeCheckoutSessionAsyncPaymentSucceeded),
+			tradeNo,
+			sessionID,
+			stripeSubscriptionBindingMetadataKey,
+			stripeWebhookBindingToken,
+			999,
+			"USD",
+			"paid",
+		)
+
+		response := invokeStripeWebhook(signedStripeWebhookRequest(t, payload))
+		assert.Equal(t, http.StatusOK, response.Code)
+		stored := model.GetSubscriptionOrderByTradeNo(tradeNo)
+		require.NotNil(t, stored)
+		assert.Equal(t, common.TopUpStatusSuccess, stored.Status)
+		var count int64
+		require.NoError(t, db.Model(&model.UserSubscription{}).Where("user_id = ?", userID).Count(&count).Error)
+		assert.Equal(t, int64(1), count)
+	})
+
+	t.Run("unpaid delayed success is acknowledged without entitlement", func(t *testing.T) {
+		gin.SetMode(gin.TestMode)
+		db := setupStripeWebhookTest(t)
+		const tradeNo = "stripe-subscription-webhook-async-unpaid"
+		const sessionID = "cs_subscription_async_unpaid"
+		userID := insertStripeWebhookSubscriptionOrder(t, db, tradeNo, sessionID)
+		payload := stripeCheckoutSessionPayloadWithType(
+			string(stripe.EventTypeCheckoutSessionAsyncPaymentSucceeded),
+			tradeNo,
+			sessionID,
+			stripeSubscriptionBindingMetadataKey,
+			stripeWebhookBindingToken,
+			999,
+			"USD",
+			"unpaid",
+		)
+
+		response := invokeStripeWebhook(signedStripeWebhookRequest(t, payload))
+		assert.Equal(t, http.StatusOK, response.Code)
+		stored := model.GetSubscriptionOrderByTradeNo(tradeNo)
+		require.NotNil(t, stored)
+		assert.Equal(t, common.TopUpStatusPending, stored.Status)
+		var count int64
+		require.NoError(t, db.Model(&model.UserSubscription{}).Where("user_id = ?", userID).Count(&count).Error)
+		assert.Zero(t, count)
+	})
+
+	t.Run("failed delayed payment closes pending subscription order", func(t *testing.T) {
+		gin.SetMode(gin.TestMode)
+		db := setupStripeWebhookTest(t)
+		const tradeNo = "stripe-subscription-webhook-async-failed"
+		const sessionID = "cs_subscription_async_failed"
+		userID := insertStripeWebhookSubscriptionOrder(t, db, tradeNo, sessionID)
+		payload := stripeCheckoutSessionPayloadWithType(
+			string(stripe.EventTypeCheckoutSessionAsyncPaymentFailed),
+			tradeNo,
+			sessionID,
+			stripeSubscriptionBindingMetadataKey,
+			stripeWebhookBindingToken,
+			999,
+			"USD",
+			"unpaid",
+		)
+
+		response := invokeStripeWebhook(signedStripeWebhookRequest(t, payload))
+		assert.Equal(t, http.StatusOK, response.Code)
+		stored := model.GetSubscriptionOrderByTradeNo(tradeNo)
+		require.NotNil(t, stored)
+		assert.Equal(t, common.TopUpStatusExpired, stored.Status)
+		var count int64
+		require.NoError(t, db.Model(&model.UserSubscription{}).Where("user_id = ?", userID).Count(&count).Error)
+		assert.Zero(t, count)
+	})
+}
+
+func TestStripeWebhook_SubscriptionMismatchesAreAcknowledgedWithoutEntitlement(t *testing.T) {
+	testCases := []struct {
+		name         string
+		sessionID    string
+		bindingToken string
+		amountUnit   int64
+		currency     string
+	}{
+		{name: "different session", sessionID: "cs_subscription_other", bindingToken: stripeWebhookBindingToken, amountUnit: 999, currency: "USD"},
+		{name: "different binding token", sessionID: "cs_subscription_expected", bindingToken: "stripe_subscription_binding_other", amountUnit: 999, currency: "USD"},
+		{name: "different amount", sessionID: "cs_subscription_expected", bindingToken: stripeWebhookBindingToken, amountUnit: 1000, currency: "USD"},
+		{name: "different currency", sessionID: "cs_subscription_expected", bindingToken: stripeWebhookBindingToken, amountUnit: 999, currency: "CNY"},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			gin.SetMode(gin.TestMode)
+			db := setupStripeWebhookTest(t)
+			tradeNo := "stripe-subscription-webhook-reject-" + tc.name
+			userID := insertStripeWebhookSubscriptionOrder(t, db, tradeNo, "cs_subscription_expected")
+			payload := stripeCheckoutCompletedPayloadWithMetadataKey(
+				tradeNo,
+				tc.sessionID,
+				stripeSubscriptionBindingMetadataKey,
+				tc.bindingToken,
+				tc.amountUnit,
+				tc.currency,
+				"paid",
+			)
+
+			response := invokeStripeWebhook(signedStripeWebhookRequest(t, payload))
+			assert.Equal(t, http.StatusOK, response.Code)
+			stored := model.GetSubscriptionOrderByTradeNo(tradeNo)
+			require.NotNil(t, stored)
+			assert.Equal(t, common.TopUpStatusPending, stored.Status)
+			assert.Equal(t, "cs_subscription_expected", stored.ExpectedSessionID)
+			var count int64
+			require.NoError(t, db.Model(&model.UserSubscription{}).Where("user_id = ?", userID).Count(&count).Error)
+			assert.Zero(t, count)
+			assert.Nil(t, model.GetTopUpByTradeNo(tradeNo))
+		})
+	}
+}
+
+func TestStripeWebhook_SubscriptionLegacyOrderFailsClosed(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	db := setupStripeWebhookTest(t)
+	const tradeNo = "stripe-subscription-webhook-legacy"
+	const sessionID = "cs_subscription_legacy"
+	userID := insertStripeWebhookSubscriptionOrder(t, db, tradeNo, sessionID)
+	order := model.GetSubscriptionOrderByTradeNo(tradeNo)
+	require.NotNil(t, order)
+	order.PaymentExpectationVersion = 0
+	order.ExpectedAmountUnit = 0
+	order.ExpectedCurrency = ""
+	order.ExpectedSessionID = ""
+	order.ExpectedBindingToken = ""
+	order.EntitlementSnapshotVersion = 0
+	order.EntitlementSnapshot = ""
+	require.NoError(t, order.Update())
+	payload := stripeCheckoutCompletedPayloadWithMetadataKey(
+		tradeNo,
+		sessionID,
+		stripeSubscriptionBindingMetadataKey,
+		stripeWebhookBindingToken,
+		999,
+		"USD",
+		"paid",
+	)
+
+	response := invokeStripeWebhook(signedStripeWebhookRequest(t, payload))
+	assert.Equal(t, http.StatusOK, response.Code)
+	stored := model.GetSubscriptionOrderByTradeNo(tradeNo)
+	require.NotNil(t, stored)
+	assert.Equal(t, common.TopUpStatusPending, stored.Status)
+	assert.Empty(t, stored.ExpectedSessionID)
+	var count int64
+	require.NoError(t, db.Model(&model.UserSubscription{}).Where("user_id = ?", userID).Count(&count).Error)
+	assert.Zero(t, count)
+	assert.Nil(t, model.GetTopUpByTradeNo(tradeNo))
 }
 
 func TestStripeRequestPay_PersistsExpectationBeforeCheckoutAndSessionAfterward(t *testing.T) {
