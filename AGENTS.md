@@ -105,6 +105,8 @@ Do NOT directly import or call `encoding/json` in business code. `json.RawMessag
 - Preserve explicit zero values in upstream relay request DTOs: absent client JSON fields must become `nil` and be omitted, while explicit `0`, `0.0`, or `false` values must remain non-`nil` and be sent upstream.
 - Avoid non-pointer scalars with `omitempty` for optional request parameters, because zero values will be silently dropped during marshal.
 
+**Plugin distribution policy:** Custom/extra task plugins MUST NOT be added to this repository (no new directories under `plugins/tasks/`, no new embedded plugins, no plugin files committed to `plugins/`). Plugins are distributed exclusively through the plugin marketplace repository at **https://github.com/ChinaToyHunter/new-api-plugins** (install or update via the task-plugin marketplace panel; the repo's `index.json` is the authoritative catalog). Built-in plugins under `plugins/tasks/` are limited to the upstream set and changes there follow upstream sync only.
+
 **Billing expression system:** When working on tiered/dynamic billing (expression-based pricing), MUST read `pkg/billingexpr/expr.md` first. It documents the design philosophy, expression language, full architecture, token normalization rules, quota conversion, and expression versioning. All billing expression changes must follow that document.
 
 **Billing safety invariants:** Quota/billing code MUST never produce a negative charge (a credit) from arithmetic overflow or unvalidated input. Apply defense in depth:
