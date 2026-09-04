@@ -1,7 +1,6 @@
 package model
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"strconv"
@@ -40,12 +39,18 @@ var (
 	ErrSubscriptionEntitlementInvalid = errors.New("subscription entitlement snapshot invalid")
 )
 
-const SubscriptionEntitlementSnapshotVersion = 1
+const (
+	SubscriptionEntitlementSnapshotVersion      = 1
+	StripeSubscriptionPaymentExpectationVersion = 1
+)
 
 type SubscriptionPaymentSettlement struct {
-	Amount   string
-	Currency string
-	StoreID  string
+	Amount       string
+	AmountUnit   int64
+	Currency     string
+	StoreID      string
+	SessionID    string
+	BindingToken string
 }
 
 const (
@@ -268,7 +273,7 @@ func (s *SubscriptionEntitlementSnapshot) Marshal() (string, error) {
 	if s == nil {
 		return "", ErrSubscriptionEntitlementInvalid
 	}
-	data, err := json.Marshal(s)
+	data, err := common.Marshal(s)
 	if err != nil {
 		return "", err
 	}
@@ -281,7 +286,7 @@ func decodeSubscriptionEntitlementSnapshot(order *SubscriptionOrder) (*Subscript
 		return nil, ErrSubscriptionEntitlementInvalid
 	}
 	var snapshot SubscriptionEntitlementSnapshot
-	if err := json.Unmarshal([]byte(order.EntitlementSnapshot), &snapshot); err != nil {
+	if err := common.UnmarshalJsonStr(order.EntitlementSnapshot, &snapshot); err != nil {
 		return nil, ErrSubscriptionEntitlementInvalid
 	}
 	plan := snapshot.subscriptionPlan(order.PlanId)
@@ -321,7 +326,10 @@ type SubscriptionOrder struct {
 	// Immutable payment and entitlement expectations captured when the order is created.
 	PaymentExpectationVersion  int     `json:"-" gorm:"default:0"`
 	ExpectedAmount             float64 `json:"-"`
+	ExpectedAmountUnit         int64   `json:"-" gorm:"default:0"`
 	ExpectedCurrency           string  `json:"-" gorm:"type:varchar(16);default:''"`
+	ExpectedSessionID          string  `json:"-" gorm:"type:varchar(255);default:''"`
+	ExpectedBindingToken       string  `json:"-" gorm:"type:varchar(255);default:''"`
 	ExpectedStoreID            string  `json:"-" gorm:"type:varchar(255);default:''"`
 	EntitlementSnapshotVersion int     `json:"-" gorm:"default:0"`
 	EntitlementSnapshot        string  `json:"-" gorm:"type:text"`
@@ -356,6 +364,53 @@ func GetSubscriptionOrderByTradeNo(tradeNo string) *SubscriptionOrder {
 		return nil
 	}
 	return &order
+}
+
+func SetStripeSubscriptionOrderExpectedSessionID(tradeNo string, sessionID string) error {
+	if strings.TrimSpace(tradeNo) == "" {
+		return errors.New("tradeNo is empty")
+	}
+	if strings.TrimSpace(sessionID) == "" {
+		return ErrPaymentExpectationInvalid
+	}
+
+	refCol := "`trade_no`"
+	if common.UsingMainDatabase(common.DatabaseTypePostgreSQL) {
+		refCol = `"trade_no"`
+	}
+
+	return DB.Transaction(func(tx *gorm.DB) error {
+		var order SubscriptionOrder
+		if err := lockForUpdate(tx).Where(refCol+" = ?", tradeNo).First(&order).Error; err != nil {
+			return ErrSubscriptionOrderNotFound
+		}
+		if order.PaymentProvider != PaymentProviderStripe {
+			return ErrPaymentMethodMismatch
+		}
+		if order.PaymentExpectationVersion != StripeSubscriptionPaymentExpectationVersion ||
+			order.ExpectedAmountUnit <= 0 ||
+			strings.TrimSpace(order.ExpectedCurrency) == "" ||
+			strings.TrimSpace(order.ExpectedBindingToken) == "" ||
+			order.EntitlementSnapshotVersion != SubscriptionEntitlementSnapshotVersion ||
+			strings.TrimSpace(order.EntitlementSnapshot) == "" {
+			return ErrPaymentExpectationInvalid
+		}
+		if order.Status == common.TopUpStatusSuccess {
+			if order.ExpectedSessionID != sessionID {
+				return ErrPaymentSettlementMismatch
+			}
+			return nil
+		}
+		if order.Status != common.TopUpStatusPending {
+			return ErrSubscriptionOrderStatusInvalid
+		}
+		if order.ExpectedSessionID != "" && order.ExpectedSessionID != sessionID {
+			return ErrPaymentSettlementMismatch
+		}
+
+		order.ExpectedSessionID = sessionID
+		return tx.Save(&order).Error
+	})
 }
 
 // User subscription instance
@@ -540,7 +595,11 @@ func getUserGroupByIdTx(tx *gorm.DB, userId int) (string, error) {
 		tx = DB
 	}
 	var group string
-	if err := lockForUpdate(tx).Model(&User{}).Where("id = ?", userId).Select(commonGroupCol).Find(&group).Error; err != nil {
+	column := commonGroupCol
+	if column == "" {
+		column = "group"
+	}
+	if err := lockForUpdate(tx).Model(&User{}).Where("id = ?", userId).Select(column).Find(&group).Error; err != nil {
 		return "", err
 	}
 	return group, nil
@@ -703,7 +762,7 @@ func CompleteSubscriptionOrder(tradeNo string, providerPayload string, expectedP
 			return ErrSubscriptionOrderStatusInvalid
 		}
 		if order.PaymentProvider == PaymentProviderWaffoPancake {
-			if len(settlement) != 1 || order.PaymentExpectationVersion != 1 ||
+			if len(settlement) != 1 || order.PaymentExpectationVersion != WaffoPancakePaymentExpectationVersion ||
 				strings.TrimSpace(order.ExpectedCurrency) == "" || strings.TrimSpace(order.ExpectedStoreID) == "" {
 				return ErrPaymentSettlementMismatch
 			}
@@ -719,9 +778,41 @@ func CompleteSubscriptionOrder(tradeNo string, providerPayload string, expectedP
 				providerStoreID == "" || providerStoreID != strings.TrimSpace(order.ExpectedStoreID) {
 				return ErrPaymentSettlementMismatch
 			}
+		} else if order.PaymentProvider == PaymentProviderStripe {
+			if order.PaymentExpectationVersion == 0 {
+				return ErrLegacyPaymentExpectation
+			}
+			if len(settlement) != 1 ||
+				order.PaymentExpectationVersion != StripeSubscriptionPaymentExpectationVersion ||
+				order.ExpectedAmountUnit <= 0 ||
+				strings.TrimSpace(order.ExpectedCurrency) == "" ||
+				strings.TrimSpace(order.ExpectedBindingToken) == "" ||
+				order.EntitlementSnapshotVersion != SubscriptionEntitlementSnapshotVersion ||
+				strings.TrimSpace(order.EntitlementSnapshot) == "" {
+				return ErrPaymentExpectationInvalid
+			}
+			stripeSettlement := settlement[0]
+			if strings.TrimSpace(stripeSettlement.SessionID) == "" ||
+				strings.TrimSpace(stripeSettlement.BindingToken) == "" ||
+				stripeSettlement.AmountUnit <= 0 ||
+				strings.TrimSpace(stripeSettlement.Currency) == "" {
+				return ErrPaymentExpectationInvalid
+			}
+			if order.ExpectedBindingToken != stripeSettlement.BindingToken {
+				return ErrPaymentSettlementMismatch
+			}
+			if order.ExpectedAmountUnit != stripeSettlement.AmountUnit ||
+				!strings.EqualFold(order.ExpectedCurrency, stripeSettlement.Currency) {
+				return ErrPaymentSettlementMismatch
+			}
+			if order.ExpectedSessionID == "" {
+				order.ExpectedSessionID = stripeSettlement.SessionID
+			} else if order.ExpectedSessionID != stripeSettlement.SessionID {
+				return ErrPaymentSettlementMismatch
+			}
 		}
 		var entitlementPlan *SubscriptionPlan
-		if order.PaymentProvider == PaymentProviderWaffoPancake {
+		if order.PaymentProvider == PaymentProviderWaffoPancake || order.PaymentProvider == PaymentProviderStripe {
 			snapshot, err := decodeSubscriptionEntitlementSnapshot(&order)
 			if err != nil {
 				return err
