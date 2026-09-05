@@ -2439,6 +2439,7 @@
     "Index": "Index",
     "Index request failed with HTTP {{status}}": "Index request failed with HTTP {{status}}",
     "Index URL": "Index URL",
+    "Inherit account group": "Inherit account group",
     "Inherit global Auto order": "Inherit global Auto order",
     "Initial quota given to new users": "Initial quota given to new users",
     "Initial quota given to new users ({{formattedQuota}})": "Initial quota given to new users ({{formattedQuota}})",

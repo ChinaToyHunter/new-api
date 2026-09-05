@@ -2439,6 +2439,7 @@
     "Index": "インデックス",
     "Index request failed with HTTP {{status}}": "インデックスの取得に失敗しました（HTTP {{status}}）",
     "Index URL": "インデックス URL",
+    "Inherit account group": "アカウントグループを継承",
     "Inherit global Auto order": "グローバル Auto 順序を継承",
     "Initial quota given to new users": "新規ユーザーに付与される初期クォータ",
     "Initial quota given to new users ({{formattedQuota}})": "新規ユーザーに付与される初期クォータ（{{formattedQuota}}）",

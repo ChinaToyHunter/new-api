@@ -2439,6 +2439,7 @@
     "Index": "Индекс",
     "Index request failed with HTTP {{status}}": "Запрос индекса завершился ошибкой HTTP {{status}}",
     "Index URL": "URL индекса",
+    "Inherit account group": "Наследовать группу аккаунта",
     "Inherit global Auto order": "Наследовать глобальный порядок Auto",
     "Initial quota given to new users": "Начальная квота, предоставляемая новым пользователям",
     "Initial quota given to new users ({{formattedQuota}})": "Начальная квота, предоставляемая новым пользователям ({{formattedQuota}})",

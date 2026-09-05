@@ -344,20 +344,22 @@ func RecalculateTaskQuotaByTokens(ctx context.Context, task *model.Task, totalTo
 		return false
 	}
 
-	// 获取用户和组的倍率信息
-	group := task.Group
-	if group == "" {
-		user, err := model.GetUserById(task.UserId, false)
-		if err == nil {
-			group = user.Group
-		}
+	// 获取用户和组的倍率信息：task.Group 是实际路由组（UsingGroup），
+	// 账户组需另从用户读取，二者不能混为同一个变量。
+	routeGroup := task.Group
+	userGroup := ""
+	if user, err := model.GetUserById(task.UserId, false); err == nil {
+		userGroup = user.Group
 	}
-	if group == "" {
+	if routeGroup == "" {
+		routeGroup = userGroup
+	}
+	if routeGroup == "" {
 		return false
 	}
 
-	groupRatio := ratio_setting.GetGroupRatio(group)
-	userGroupRatio, hasUserGroupRatio := ratio_setting.GetGroupGroupRatio(group, group)
+	groupRatio := ratio_setting.GetGroupRatio(routeGroup)
+	userGroupRatio, hasUserGroupRatio := ratio_setting.GetGroupGroupRatio(userGroup, routeGroup)
 
 	var finalGroupRatio float64
 	if hasUserGroupRatio {

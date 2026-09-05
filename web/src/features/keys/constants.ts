@@ -16,7 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { type StatusBadgeProps } from '@/components/status-badge'
+import type { StatusBadgeProps } from '@/components/status-badge'
 
 // ============================================================================
 // API Key Status Configuration
@@ -70,7 +70,11 @@ export const API_KEY_STATUS_OPTIONS = Object.values(API_KEY_STATUSES).map(
 // Default Values
 // ============================================================================
 
-export const DEFAULT_GROUP = '' as const
+// Legacy tokens created before the auto-default contract stored an empty
+// group and inherited the owner's account group at relay time. The form keeps
+// this sentinel so editing such a token preserves the stored value unless the
+// user explicitly picks a group.
+export const LEGACY_INHERIT_GROUP = '' as const
 
 // ============================================================================
 // Error Messages (i18n keys: use t(ERROR_MESSAGES.xxx) when displaying)

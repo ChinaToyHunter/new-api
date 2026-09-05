@@ -2439,6 +2439,7 @@
     "Index": "索引",
     "Index request failed with HTTP {{status}}": "索引请求失败，HTTP {{status}}",
     "Index URL": "索引 URL",
+    "Inherit account group": "继承账户分组",
     "Inherit global Auto order": "继承全局 Auto 顺序",
     "Initial quota given to new users": "授予新用户的初始配额",
     "Initial quota given to new users ({{formattedQuota}})": "授予新用户的初始配额（{{formattedQuota}}）",

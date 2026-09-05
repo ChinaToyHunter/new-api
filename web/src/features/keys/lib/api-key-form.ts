@@ -21,7 +21,7 @@ import { z } from 'zod'
 
 import { parseQuotaFromDollars, quotaUnitsToDollars } from '@/lib/format'
 
-import { DEFAULT_GROUP } from '../constants'
+import { LEGACY_INHERIT_GROUP } from '../constants'
 import type { ApiKey, ApiKeyFormData } from '../types'
 
 // ============================================================================
@@ -110,22 +110,18 @@ export const API_KEY_FORM_DEFAULT_VALUES: ApiKeyFormValues = {
   unlimited_quota: true,
   model_limits: [],
   allow_ips: '',
-  group: DEFAULT_GROUP,
+  group: 'auto',
   auto_groups_mode: 'inherit',
   auto_groups: [],
   cross_group_retry: true,
   tokenCount: 1,
 }
 
-export function getApiKeyFormDefaultValues(
-  defaultUseAutoGroup: boolean
-): ApiKeyFormValues {
+// New tokens default to the auto routing policy; the backend normalizes a
+// missing or empty group to auto, so no server capability probe is needed.
+export function getApiKeyFormDefaultValues(): ApiKeyFormValues {
   return {
     ...API_KEY_FORM_DEFAULT_VALUES,
-    group: defaultUseAutoGroup ? 'auto' : DEFAULT_GROUP,
-    auto_groups_mode: 'inherit',
-    auto_groups: [],
-    cross_group_retry: defaultUseAutoGroup,
   }
 }
 
@@ -151,6 +147,7 @@ export function transformFormDataToPayload(
     model_limits_enabled: data.model_limits.length > 0,
     model_limits: data.model_limits.join(','),
     allow_ips: data.allow_ips || '',
+    // 提交契约：空组表示保留 legacy 继承（更新）或由后端规范化（创建端亦接受 auto 默认）。
     group: data.group || '',
     auto_groups:
       data.group === 'auto' && data.auto_groups_mode === 'custom'
@@ -189,7 +186,8 @@ export function transformApiKeyToFormDefaults(
       ? apiKey.model_limits.split(',').filter(Boolean)
       : [],
     allow_ips: apiKey.allow_ips || '',
-    group: apiKey.group || DEFAULT_GROUP,
+    // 空值是历史 legacy 令牌（继承账户组），保留哨兵而不是静默映射为 auto。
+    group: apiKey.group || LEGACY_INHERIT_GROUP,
     auto_groups_mode: autoGroupsMode,
     auto_groups: autoGroups,
     cross_group_retry: !!apiKey.cross_group_retry,
