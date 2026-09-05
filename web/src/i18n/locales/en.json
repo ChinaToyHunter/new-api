@@ -5565,7 +5565,7 @@
     "Choose whether users may enter, must enter, or cannot use an invitation code when registering": "Choose whether users may enter, must enter, or cannot use an invitation code when registering",
     "Confirm update": "Confirm update",
     "CSV export downloaded": "CSV export downloaded",
-    "Deploy source: {{repo}}. Merge upstream into your fork before publishing releases.": "Deploy source: {{repo}}. Merge upstream into your fork before publishing releases.",
+    "Deploy source: {{repo}}": "Deploy source: {{repo}}",
     "Docker socket unavailable. Mount /var/run/docker.sock to enable one-click updates.": "Docker socket unavailable. Mount /var/run/docker.sock to enable one-click updates.",
     "Enter invitation code": "Enter invitation code",
     "Export CSV": "Export CSV",

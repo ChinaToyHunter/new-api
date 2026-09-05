@@ -5565,7 +5565,7 @@
     "Choose whether users may enter, must enter, or cannot use an invitation code when registering": "Chọn mã mời khi đăng ký là tuỳ chọn, bắt buộc hoặc ẩn (tắt hoàn toàn)",
     "Confirm update": "Confirm update",
     "CSV export downloaded": "Đã tải xuống bản xuất CSV",
-    "Deploy source: {{repo}}. Merge upstream into your fork before publishing releases.": "Deploy source: {{repo}}. Merge upstream into your fork before publishing releases.",
+    "Deploy source: {{repo}}": "Nguồn triển khai: {{repo}}",
     "Docker socket unavailable. Mount /var/run/docker.sock to enable one-click updates.": "Docker socket unavailable. Mount /var/run/docker.sock to enable one-click updates.",
     "Enter invitation code": "Nhập mã mời",
     "Export CSV": "Xuất CSV",

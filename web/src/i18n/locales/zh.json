@@ -5565,7 +5565,7 @@
     "Choose whether users may enter, must enter, or cannot use an invitation code when registering": "设置注册时邀请码为可选、必填，或完全隐藏并禁用",
     "Confirm update": "确认更新",
     "CSV export downloaded": "CSV 导出文件已下载",
-    "Deploy source: {{repo}}. Merge upstream into your fork before publishing releases.": "部署源：{{repo}}。请先将上游合入 fork 再发版。",
+    "Deploy source: {{repo}}": "部署源：{{repo}}",
     "Docker socket unavailable. Mount /var/run/docker.sock to enable one-click updates.": "Docker socket 不可用。请挂载 /var/run/docker.sock 以启用一键更新。",
     "Enter invitation code": "请输入邀请码",
     "Export CSV": "导出 CSV",
