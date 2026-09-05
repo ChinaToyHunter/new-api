@@ -50,8 +50,6 @@ let renderedDrawer: RenderedDrawer | null = null
 function installApiFixtures(createdPayloads: Array<Record<string, unknown>>) {
   apiClient.get = async (url) => {
     switch (url) {
-      case '/api/status':
-        return { data: { data: { default_use_auto_group: true } } }
       case '/api/user/models':
         return { data: { success: true, data: [] } }
       case '/api/user/self/groups':
@@ -89,11 +87,6 @@ async function renderCreateDrawer(): Promise<void> {
     defaultOptions: { queries: { retry: false } },
   })
   const freshAt = Date.now() + 60_000
-  queryClient.setQueryData(
-    ['status'],
-    { default_use_auto_group: true },
-    { updatedAt: freshAt }
-  )
   queryClient.setQueryData(
     ['user-models'],
     { success: true, data: [] },

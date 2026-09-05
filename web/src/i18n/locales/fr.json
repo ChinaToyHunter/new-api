@@ -2439,6 +2439,7 @@
     "Index": "Index",
     "Index request failed with HTTP {{status}}": "Échec de la requête d’index : HTTP {{status}}",
     "Index URL": "URL de l’index",
+    "Inherit account group": "Hériter du groupe de compte",
     "Inherit global Auto order": "Hériter de l’ordre Auto global",
     "Initial quota given to new users": "Quota initial donné aux nouveaux utilisateurs",
     "Initial quota given to new users ({{formattedQuota}})": "Quota initial donné aux nouveaux utilisateurs ({{formattedQuota}})",

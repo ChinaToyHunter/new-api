@@ -10,6 +10,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/relaykit/dto"
+	"github.com/QuantumNous/new-api/setting"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 
 	"github.com/bytedance/gopkg/util/gopool"
@@ -585,6 +586,11 @@ func (user *User) prepareForInsert(tx *gorm.DB) error {
 	user.Email = NormalizeEmail(user.Email)
 	if err := ensureEmailAvailableWithTx(tx, user.Email, 0); err != nil {
 		return err
+	}
+	// 未显式指定账户组的新用户使用部署配置的默认组（Option DefaultUserGroup），
+	// 覆盖注册、管理员创建、OAuth、微信等所有经 Insert/InsertWithTx 的路径。
+	if strings.TrimSpace(user.Group) == "" {
+		user.Group = setting.GetDefaultUserGroup()
 	}
 	if user.Password == "" {
 		return nil

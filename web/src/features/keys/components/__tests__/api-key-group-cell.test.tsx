@@ -33,6 +33,9 @@ await i18n.use(initReactI18next).init({
         Auto: 'Auto',
         'Cross-group': 'Cross-group',
         Ratio: 'Ratio',
+        'Inherit account group': 'Inherit account group',
+        'This token inherits the owner account group (legacy)':
+          'This token inherits the owner account group (legacy)',
         'Automatically selects the best available group with circuit breaker mechanism':
           'Automatically selects the best available group with circuit breaker mechanism',
       },
@@ -61,6 +64,19 @@ function CellHarness(props: {
 }
 
 describe('API key group table cell', () => {
+  test('renders a legacy inherit-account-group state for empty group values', () => {
+    const { container } = render(
+      <CellHarness group='' shouldReduceMotion={false} />
+    )
+
+    expect(container.querySelector('[data-auto-group-frame]')).toBe(null)
+    expect(container.querySelector('[data-auto-group-effect="ratio"]')).toBe(
+      null
+    )
+    expect(container).not.toHaveTextContent('Cross-group')
+    expect(container).toHaveTextContent('Inherit account group')
+  })
+
   test('renders an unclipped ring and a localized Auto ratio when API data uses a nonlocalized string', () => {
     const { container } = render(
       <CellHarness

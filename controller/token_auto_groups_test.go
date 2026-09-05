@@ -232,3 +232,97 @@ func TestGetTokenAutoGroupsReturnsFullFilteredGlobalOrderAndLimit(t *testing.T) 
 	assert.Equal(t, []string{"vip", "default"}, data.Groups)
 	assert.Equal(t, 1, data.MaxCount)
 }
+
+func TestAddTokenDefaultsMissingOrEmptyGroupToAuto(t *testing.T) {
+	tests := []struct {
+		name         string
+		includeField bool
+		value        any
+	}{
+		{name: "omitted"},
+		{name: "null", includeField: true, value: nil},
+		{name: "empty string", includeField: true, value: ""},
+		{name: "whitespace", includeField: true, value: "   "},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			configureTokenAutoGroupsTest(t, "5", `["default","vip"]`)
+			user := setupTokenAutoGroupsControllerTest(t)
+			request := baseAutoTokenRequest("default-group-" + test.name)
+			delete(request, "group")
+			delete(request, "cross_group_retry")
+			if test.includeField {
+				request["group"] = test.value
+			}
+
+			ctx, recorder := newTokenAutoGroupsAuthenticatedContext(t, http.MethodPost, "/api/token/", request, user.Id)
+			AddToken(ctx)
+
+			response := decodeAPIResponse(t, recorder)
+			require.True(t, response.Success, response.Message)
+			var token model.Token
+			require.NoError(t, model.DB.Where("name = ?", request["name"]).First(&token).Error)
+			assert.Equal(t, "auto", token.Group)
+		})
+	}
+}
+
+func TestAddTokenKeepsExplicitFixedGroup(t *testing.T) {
+	configureTokenAutoGroupsTest(t, "5", `["default","vip"]`)
+	user := setupTokenAutoGroupsControllerTest(t)
+	request := baseAutoTokenRequest("fixed-group")
+	request["group"] = "default"
+	request["cross_group_retry"] = false
+
+	ctx, recorder := newTokenAutoGroupsAuthenticatedContext(t, http.MethodPost, "/api/token/", request, user.Id)
+	AddToken(ctx)
+
+	response := decodeAPIResponse(t, recorder)
+	require.True(t, response.Success, response.Message)
+	var token model.Token
+	require.NoError(t, model.DB.Where("name = ?", "fixed-group").First(&token).Error)
+	assert.Equal(t, "default", token.Group)
+	assert.False(t, token.CrossGroupRetry)
+}
+
+func TestUpdateTokenGroupOmittedPreservesEmptyExplicitBecomesAuto(t *testing.T) {
+	configureTokenAutoGroupsTest(t, "5", `["default","vip"]`)
+	user := setupTokenAutoGroupsControllerTest(t)
+
+	tests := []struct {
+		name         string
+		includeField bool
+		expected     string
+	}{
+		{name: "omitted preserves fixed group", includeField: false, expected: "default"},
+		{name: "empty string becomes auto", includeField: true, expected: "auto"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			token := seedToken(t, model.DB, user.Id, "preserve-group-"+test.name, "preserve-group-key-"+common.GetRandomString(8))
+			token.Group = "default"
+			require.NoError(t, model.DB.Save(token).Error)
+
+			request := baseAutoTokenRequest("updated-" + test.name)
+			request["id"] = token.Id
+			request["status"] = common.TokenStatusEnabled
+			request["name"] = token.Name
+			request["group"] = "default"
+			request["cross_group_retry"] = false
+			if test.includeField {
+				request["group"] = ""
+			} else {
+				delete(request, "group")
+			}
+
+			ctx, recorder := newTokenAutoGroupsAuthenticatedContext(t, http.MethodPut, "/api/token/", request, user.Id)
+			UpdateToken(ctx)
+			response := decodeAPIResponse(t, recorder)
+			require.True(t, response.Success, response.Message)
+
+			var updated model.Token
+			require.NoError(t, model.DB.First(&updated, token.Id).Error)
+			assert.Equal(t, test.expected, updated.Group)
+		})
+	}
+}

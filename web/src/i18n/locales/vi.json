@@ -2439,6 +2439,7 @@
     "Index": "Chỉ mục",
     "Index request failed with HTTP {{status}}": "Yêu cầu chỉ mục thất bại với HTTP {{status}}",
     "Index URL": "URL chỉ mục",
+    "Inherit account group": "Kế thừa nhóm tài khoản",
     "Inherit global Auto order": "Kế thừa thứ tự Auto toàn cục",
     "Initial quota given to new users": "Hạn mức ban đầu cấp cho người dùng mới",
     "Initial quota given to new users ({{formattedQuota}})": "Hạn mức ban đầu cấp cho người dùng mới ({{formattedQuota}})",

@@ -43,6 +43,21 @@ type ApiKeyGroupCellProps = {
 export function ApiKeyGroupCell(props: ApiKeyGroupCellProps) {
   const { t } = useTranslation()
 
+  // 历史空组令牌在 relay 时继承用户账户组，展示为独立的 legacy 状态而不是空徽章。
+  if (!props.group) {
+    return (
+      <TruncatedCell
+        className='-ml-1.5'
+        tooltipContent={t(
+          'This token inherits the owner account group (legacy)'
+        )}
+        tooltipClassName='break-all'
+      >
+        <GroupBadge label={t('Inherit account group')} />
+      </TruncatedCell>
+    )
+  }
+
   if (props.group !== 'auto') {
     const ratio = typeof props.ratio === 'number' ? props.ratio : undefined
     return (
@@ -66,11 +81,7 @@ export function ApiKeyGroupCell(props: ApiKeyGroupCellProps) {
           />
         }
       >
-        <StatusBadge
-          label={t('Cross-group')}
-          variant='info'
-          copyable={false}
-        />
+        <StatusBadge label={t('Cross-group')} variant='info' copyable={false} />
         {/*<AutoGroupBadge shouldReduceMotion={props.shouldReduceMotion} />*/}
         <GroupRatioBadge
           ratio={props.ratio}

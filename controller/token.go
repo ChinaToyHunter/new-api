@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -32,9 +33,59 @@ func (input *tokenAutoGroupsInput) UnmarshalJSON(data []byte) error {
 	return common.Unmarshal(data, &input.Groups)
 }
 
+// tokenGroupInput 区分创建请求中 group 字段"缺失"与"显式空值"，
+// 使新建 Token 的默认路由策略（auto）可以与旧客户端的空值行为保持一致。
+type tokenGroupInput struct {
+	Set   bool
+	Group string
+}
+
+func (input *tokenGroupInput) UnmarshalJSON(data []byte) error {
+	input.Set = true
+	var group string
+	if err := common.Unmarshal(data, &group); err != nil {
+		return err
+	}
+	input.Group = strings.TrimSpace(group)
+	return nil
+}
+
+// normalizeCreateTokenGroup 将创建请求的路由组规范化为落库值：
+// 缺失或空值统一为 auto（新契约），显式 auto/固定组保持原值。
+func normalizeCreateTokenGroup(groupInput tokenGroupInput) string {
+	if !groupInput.Set || groupInput.Group == "" {
+		return "auto"
+	}
+	return groupInput.Group
+}
+
 type tokenRequest struct {
 	model.Token
 	AutoGroups tokenAutoGroupsInput `json:"auto_groups"`
+	// GroupInput 仅在创建时使用，区分 group 缺失与显式空值；更新仍走 model.Token.Group。
+	GroupInput *tokenGroupInput `json:"-"`
+}
+
+func (r *tokenRequest) UnmarshalJSON(data []byte) error {
+	type plainTokenRequest tokenRequest
+	var plain plainTokenRequest
+	if err := common.Unmarshal(data, &plain); err != nil {
+		return err
+	}
+	*r = tokenRequest(plain)
+	// 单独解析原始 JSON 以区分 group 缺失与显式空值（嵌入的 model.Token 无法表达该区别）。
+	var rawFields map[string]json.RawMessage
+	if err := common.Unmarshal(data, &rawFields); err != nil {
+		return err
+	}
+	if raw, ok := rawFields["group"]; ok {
+		groupInput := tokenGroupInput{}
+		if err := common.Unmarshal(raw, &groupInput); err != nil {
+			return err
+		}
+		r.GroupInput = &groupInput
+	}
+	return nil
 }
 
 type tokenResponse struct {
@@ -280,6 +331,13 @@ func AddToken(c *gin.Context) {
 		return
 	}
 	token := request.Token
+	// 新契约：创建时 group 缺失或为空一律视为 auto，不再隐式继承用户组。
+	// 显式传入的固定组/auto 保持原值，由下方既有分支处理 AutoGroups/CrossGroupRetry。
+	if request.GroupInput != nil {
+		token.Group = normalizeCreateTokenGroup(*request.GroupInput)
+	} else {
+		token.Group = "auto"
+	}
 	if len(token.Name) > 50 {
 		common.ApiErrorI18n(c, i18n.MsgTokenNameTooLong)
 		return
@@ -416,9 +474,18 @@ func UpdateToken(c *gin.Context) {
 		cleanToken.ModelLimitsEnabled = token.ModelLimitsEnabled
 		cleanToken.ModelLimits = token.ModelLimits
 		cleanToken.AllowIps = token.AllowIps
-		cleanToken.Group = token.Group
 		cleanToken.CrossGroupRetry = token.CrossGroupRetry
-		if token.Group != "auto" {
+		// 更新契约：group 缺失时保留数据库原值，避免旧客户端静默改组；
+		// 显式空值视为改用 auto，显式值覆盖原值。
+		// GroupInput 只在请求原始 JSON 带 group 字段时非 nil，据此区分"缺失"与"显式值"。
+		if request.GroupInput != nil {
+			if request.GroupInput.Group == "" {
+				cleanToken.Group = "auto"
+			} else {
+				cleanToken.Group = request.GroupInput.Group
+			}
+		}
+		if cleanToken.Group != "auto" {
 			cleanToken.CrossGroupRetry = false
 			_ = cleanToken.SetAutoGroups(nil)
 		} else if request.AutoGroups.Set {

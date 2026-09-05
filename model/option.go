@@ -132,6 +132,7 @@ func InitOptionMap() {
 	common.OptionMap["Chats"] = setting.Chats2JsonString()
 	common.OptionMap["AutoGroups"] = setting.AutoGroups2JsonString()
 	common.OptionMap["DefaultUseAutoGroup"] = strconv.FormatBool(setting.DefaultUseAutoGroup)
+	common.OptionMap["DefaultUserGroup"] = setting.GetDefaultUserGroup()
 	common.OptionMap["MaxTokenAutoGroups"] = strconv.Itoa(setting.GetMaxTokenAutoGroups())
 	common.OptionMap["PayMethods"] = operation_setting.PayMethods2JsonString()
 	common.OptionMap["GitHubClientId"] = ""
@@ -230,6 +231,9 @@ func validateOptionValue(key string, value string) error {
 	}
 	if key == "MaxTokenAutoGroups" {
 		return setting.ValidateMaxTokenAutoGroups(value)
+	}
+	if key == "DefaultUserGroup" {
+		return setting.ValidateDefaultUserGroup(value)
 	}
 	return nil
 }
@@ -415,6 +419,9 @@ func updateOptionMap(key string, value string) (err error) {
 		case "ExposeRatioEnabled":
 			ratio_setting.SetExposeRatioEnabled(boolValue)
 		}
+	}
+	if key == "DefaultUserGroup" {
+		setting.SetDefaultUserGroup(value)
 	}
 	if key == setting.TaskPluginDisabledFactoryKeysKey {
 		jsplugin.DefaultRegistry.SetDisabledFactoryKeys(setting.ParseTaskPluginDisabledFactoryKeys(value))

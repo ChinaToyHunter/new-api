@@ -61,12 +61,13 @@ describe('API key Auto group form mapping', () => {
     expect(apiKeySchema.parse(legacyApiKey).auto_groups).toBe(null)
   })
 
-  test('creates an Auto token that inherits the global order', () => {
-    const defaults = getApiKeyFormDefaultValues(true)
+  test('defaults a new token form to the auto routing policy without a backend probe', () => {
+    const defaults = getApiKeyFormDefaultValues()
 
     expect(defaults.group).toBe('auto')
     expect(defaults.auto_groups_mode).toBe('inherit')
     expect(defaults.auto_groups).toEqual([])
+    expect(defaults.cross_group_retry).toBe(true)
     expect(transformFormDataToPayload(defaults).auto_groups).toEqual([])
   })
 
@@ -89,6 +90,16 @@ describe('API key Auto group form mapping', () => {
       expect(defaults.auto_groups_mode).toBe('inherit')
       expect(defaults.auto_groups).toEqual([])
     }
+  })
+
+  test('keeps a legacy empty group as the inherit sentinel instead of mapping it to auto', () => {
+    const legacyGroupKey = { ...baseApiKey, group: '' }
+    const defaults = transformApiKeyToFormDefaults(legacyGroupKey, ['vip'], 2)
+
+    expect(defaults.group).toBe('')
+    expect(transformFormDataToPayload(defaults).group).toBe('')
+    expect(transformFormDataToPayload(defaults).cross_group_retry).toBe(false)
+    expect(transformFormDataToPayload(defaults).auto_groups).toEqual([])
   })
 
   test('filters a stored snapshot before applying a lowered limit', () => {
@@ -126,7 +137,7 @@ describe('API key Auto group form mapping', () => {
 
   test('submits a valid custom snapshot in its configured order', () => {
     const custom = {
-      ...getApiKeyFormDefaultValues(true),
+      ...getApiKeyFormDefaultValues(),
       auto_groups_mode: 'custom' as const,
       auto_groups: ['vip', 'default'],
     }
@@ -138,7 +149,7 @@ describe('API key Auto group form mapping', () => {
   })
 
   test('submits an empty array for inheritance and for non-Auto groups', () => {
-    const inherited = getApiKeyFormDefaultValues(true)
+    const inherited = getApiKeyFormDefaultValues()
     expect(transformFormDataToPayload(inherited).auto_groups).toEqual([])
 
     const nonAuto = {
@@ -153,7 +164,7 @@ describe('API key Auto group form mapping', () => {
 
   test('rejects snapshots over the configured limit', () => {
     const result = getApiKeyFormSchema(t, 1).safeParse({
-      ...getApiKeyFormDefaultValues(true),
+      ...getApiKeyFormDefaultValues(),
       name: 'limited token',
       auto_groups_mode: 'custom',
       auto_groups: ['default', 'vip'],
@@ -167,7 +178,7 @@ describe('API key Auto group form mapping', () => {
 
   test('rejects duplicate custom groups', () => {
     const result = getApiKeyFormSchema(t).safeParse({
-      ...getApiKeyFormDefaultValues(true),
+      ...getApiKeyFormDefaultValues(),
       name: 'duplicate token',
       auto_groups_mode: 'custom',
       auto_groups: ['vip', 'vip'],

@@ -6,6 +6,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/setting"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/gin-gonic/gin"
 )
@@ -110,6 +111,7 @@ func PostSetup(c *gin.Context) {
 			DisplayName: "Root User",
 			AccessToken: nil,
 			Quota:       100000000,
+			Group:       setting.GetDefaultUserGroup(),
 		}
 		err = model.DB.Create(&rootUser).Error
 		if err != nil {
