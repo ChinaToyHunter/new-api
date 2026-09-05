@@ -288,12 +288,9 @@ export function UpdateCheckerSection({
             </p>
           )}
           <p className='text-muted-foreground text-xs'>
-            {t(
-              'Deploy source: {{repo}}. Merge upstream into your fork before publishing releases.',
-              {
-                repo: checkInfo?.update_source || 'ChinaToyHunter/new-api',
-              }
-            )}
+            {t('Deploy source: {{repo}}', {
+              repo: checkInfo?.update_source || 'ChinaToyHunter/new-api',
+            })}
           </p>
         </div>
       </SettingsSection>
@@ -328,12 +325,9 @@ export function UpdateCheckerSection({
         }
       >
         <p className='text-muted-foreground text-sm'>
-          {t(
-            'Deploy source: {{repo}}. Merge upstream into your fork before publishing releases.',
-            {
-              repo: checkInfo?.update_source || 'ChinaToyHunter/new-api',
-            }
-          )}
+          {t('Deploy source: {{repo}}', {
+            repo: checkInfo?.update_source || 'ChinaToyHunter/new-api',
+          })}
         </p>
       </Dialog>
 

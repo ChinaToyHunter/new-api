@@ -5565,7 +5565,7 @@
     "Choose whether users may enter, must enter, or cannot use an invitation code when registering": "登録時の招待コードを任意・必須・非表示（完全無効）から選択します",
     "Confirm update": "Confirm update",
     "CSV export downloaded": "CSVエクスポートをダウンロードしました",
-    "Deploy source: {{repo}}. Merge upstream into your fork before publishing releases.": "Deploy source: {{repo}}. Merge upstream into your fork before publishing releases.",
+    "Deploy source: {{repo}}": "デプロイソース: {{repo}}",
     "Docker socket unavailable. Mount /var/run/docker.sock to enable one-click updates.": "Docker socket unavailable. Mount /var/run/docker.sock to enable one-click updates.",
     "Enter invitation code": "招待コードを入力",
     "Export CSV": "CSVをエクスポート",
