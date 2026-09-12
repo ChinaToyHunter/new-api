@@ -5664,6 +5664,17 @@
     "Top-up account-group ratios": "チャージのアカウントグループ倍率",
     "Use as default": "既定として使用",
     "User-selectable": "ユーザーが選択可能",
-    "group_special_usable_group maps account groups to route-group visibility. Add or hide route groups for users in each account group.": "group_special_usable_group はアカウントグループをルートグループの表示設定に対応付けます。各アカウントグループのユーザーに対してルートグループを追加または非表示にできます。"
+    "group_special_usable_group maps account groups to route-group visibility. Add or hide route groups for users in each account group.": "group_special_usable_group はアカウントグループをルートグループの表示設定に対応付けます。各アカウントグループのユーザーに対してルートグループを追加または非表示にできます。",
+    "Allow selecting an available release for upgrade or rollback on the system maintenance page": "システムメンテナンスページで利用可能なバージョンを選択してアップグレードまたはロールバックできるようにする",
+    "Confirm version replacement": "バージョン切替の確認",
+    "Loading versions...": "バージョン一覧を読み込み中...",
+    "Replace version": "このバージョンに切替",
+    "Target version": "ターゲットバージョン",
+    "Select a target version": "ターゲットバージョンを選択",
+    "Select a target version.": "ターゲットバージョンを先に選択してください。",
+    "Selected version is already installed ({{version}}).": "選択したバージョンはすでに実行中です（{{version}}）。",
+    "Failed to load available versions.": "利用可能なバージョン一覧の読み込みに失敗しました。",
+    "No available releases were found.": "利用可能なリリースが見つかりませんでした。",
+    "Replace {{from}} with {{to}} using {{mode}} deployment?": "{{mode}} デプロイで {{from}} を {{to}} に置き換えますか？"
   }
 }

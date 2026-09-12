@@ -360,6 +360,7 @@ export type OperationsSettings = {
   DefaultCollapseSidebar: boolean
   DemoSiteEnabled: boolean
   SelfUseModeEnabled: boolean
+  SystemUpdateTestModeEnabled: boolean
   QuotaRemindThreshold: string
   SMTPServer: string
   SMTPPort: string
@@ -478,6 +479,16 @@ export type SystemUpdateReleaseInfo = {
   body?: string
   html_url?: string
   published_at?: string
+}
+
+export type SystemUpdateReleasesResponse = {
+  success: boolean
+  message: string
+  data: Array<
+    SystemUpdateReleaseInfo & {
+      prerelease?: boolean
+    }
+  >
 }
 
 export type SystemUpdateCheckData = {

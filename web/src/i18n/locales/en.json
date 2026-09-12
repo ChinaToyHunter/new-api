@@ -5664,6 +5664,17 @@
     "Top-up account-group ratios": "Top-up account-group ratios",
     "Use as default": "Use as default",
     "User-selectable": "User-selectable",
-    "group_special_usable_group maps account groups to route-group visibility. Add or hide route groups for users in each account group.": "group_special_usable_group maps account groups to route-group visibility. Add or hide route groups for users in each account group."
+    "group_special_usable_group maps account groups to route-group visibility. Add or hide route groups for users in each account group.": "group_special_usable_group maps account groups to route-group visibility. Add or hide route groups for users in each account group.",
+    "Allow selecting an available release for upgrade or rollback on the system maintenance page": "Allow selecting an available release for upgrade or rollback on the system maintenance page",
+    "Confirm version replacement": "Confirm version replacement",
+    "Loading versions...": "Loading versions...",
+    "Replace version": "Replace version",
+    "Target version": "Target version",
+    "Select a target version": "Select a target version",
+    "Select a target version.": "Select a target version.",
+    "Selected version is already installed ({{version}}).": "Selected version is already installed ({{version}}).",
+    "Failed to load available versions.": "Failed to load available versions.",
+    "No available releases were found.": "No available releases were found.",
+    "Replace {{from}} with {{to}} using {{mode}} deployment?": "Replace {{from}} with {{to}} using {{mode}} deployment?"
   }
 }

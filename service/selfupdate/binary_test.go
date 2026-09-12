@@ -305,6 +305,14 @@ func (f *fakeGH) FetchLatestRelease(context.Context, string) (*ReleaseInfo, erro
 	return nil, fmt.Errorf("unused")
 }
 
+func (f *fakeGH) ListReleases(context.Context, string, int) ([]ReleaseSummary, error) {
+	return nil, fmt.Errorf("unused")
+}
+
+func (f *fakeGH) FetchReleaseByTag(context.Context, string, string) (*ReleaseInfo, error) {
+	return nil, fmt.Errorf("unused")
+}
+
 func (f *fakeGH) Download(_ context.Context, url, dest string, _ int64) error {
 	b, ok := f.files[url]
 	if !ok {

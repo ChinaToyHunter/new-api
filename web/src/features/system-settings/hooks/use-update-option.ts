@@ -20,7 +20,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query'
 import i18next from 'i18next'
 import { toast } from 'sonner'
 
-import { updateSystemOption } from '../api'
+import { updateSystemOption, updateSystemOptions } from '../api'
 import type { UpdateOptionRequest } from '../types'
 
 // Configuration keys that require status refresh
@@ -59,6 +59,26 @@ export function useUpdateOption() {
           }
         }
 
+        toast.success(i18next.t('Setting updated successfully'))
+      } else {
+        toast.error(data.message || i18next.t('Failed to update setting'))
+      }
+    },
+    onError: (error: Error) => {
+      toast.error(error.message || i18next.t('Failed to update setting'))
+    },
+  })
+}
+
+export function useUpdateOptions() {
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: (options: Record<string, string | boolean | number>) =>
+      updateSystemOptions(options),
+    onSuccess: (data) => {
+      if (data.success) {
+        queryClient.invalidateQueries({ queryKey: ['system-options'] })
         toast.success(i18next.t('Setting updated successfully'))
       } else {
         toast.error(data.message || i18next.t('Failed to update setting'))

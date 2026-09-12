@@ -5664,6 +5664,17 @@
     "Top-up account-group ratios": "Ratios de recharge par groupe de comptes",
     "Use as default": "Utiliser par défaut",
     "User-selectable": "Sélectionnable par l’utilisateur",
-    "group_special_usable_group maps account groups to route-group visibility. Add or hide route groups for users in each account group.": "group_special_usable_group associe les groupes de comptes à la visibilité des groupes de routage. Ajoutez ou masquez des groupes de routage pour les utilisateurs de chaque groupe de comptes."
+    "group_special_usable_group maps account groups to route-group visibility. Add or hide route groups for users in each account group.": "group_special_usable_group associe les groupes de comptes à la visibilité des groupes de routage. Ajoutez ou masquez des groupes de routage pour les utilisateurs de chaque groupe de comptes.",
+    "Allow selecting an available release for upgrade or rollback on the system maintenance page": "Autoriser la sélection d’une version disponible pour une mise à niveau ou un retour arrière sur la page de maintenance système",
+    "Confirm version replacement": "Confirmer le remplacement de version",
+    "Loading versions...": "Chargement des versions...",
+    "Replace version": "Remplacer par cette version",
+    "Target version": "Version cible",
+    "Select a target version": "Sélectionner une version cible",
+    "Select a target version.": "Sélectionnez d’abord une version cible.",
+    "Selected version is already installed ({{version}}).": "La version sélectionnée est déjà installée ({{version}}).",
+    "Failed to load available versions.": "Échec du chargement des versions disponibles.",
+    "No available releases were found.": "Aucune version disponible n’a été trouvée.",
+    "Replace {{from}} with {{to}} using {{mode}} deployment?": "Remplacer {{from}} par {{to}} avec le déploiement {{mode}} ?"
   }
 }

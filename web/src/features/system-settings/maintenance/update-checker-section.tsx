@@ -16,18 +16,30 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { ArrowDownToLineIcon, ExternalLinkIcon, RefreshCcwIcon } from 'lucide-react'
-import { useCallback, useState } from 'react'
+import {
+  ArrowDownToLineIcon,
+  ExternalLinkIcon,
+  RefreshCcwIcon,
+} from 'lucide-react'
+import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 
 import { Dialog } from '@/components/dialog'
 import { Button } from '@/components/ui/button'
 import { Markdown } from '@/components/ui/markdown'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 import { formatTimestamp, formatTimestampToDate } from '@/lib/format'
 
 import {
   checkSystemUpdate,
+  listSystemUpdateReleases,
   performSystemUpdate,
   restartSystem,
 } from '../api'
@@ -37,6 +49,7 @@ import type { SystemUpdateCheckData, SystemUpdateReleaseInfo } from '../types'
 type UpdateCheckerSectionProps = {
   currentVersion?: string | null
   startTime?: number | null
+  testModeEnabled?: boolean
 }
 
 async function waitForServiceReady(timeoutMs = 120_000) {
@@ -58,6 +71,7 @@ async function waitForServiceReady(timeoutMs = 120_000) {
 export function UpdateCheckerSection({
   currentVersion,
   startTime,
+  testModeEnabled = false,
 }: UpdateCheckerSectionProps) {
   const { t } = useTranslation()
   const [checking, setChecking] = useState(false)
@@ -65,11 +79,51 @@ export function UpdateCheckerSection({
   const [confirmOpen, setConfirmOpen] = useState(false)
   const [dialogOpen, setDialogOpen] = useState(false)
   const [release, setRelease] = useState<SystemUpdateReleaseInfo | null>(null)
+  const [releases, setReleases] = useState<SystemUpdateReleaseInfo[]>([])
+  const [versionsLoading, setVersionsLoading] = useState(false)
+  const [versionsError, setVersionsError] = useState(false)
+  const [selectedVersion, setSelectedVersion] = useState<string | null>(null)
   const [checkInfo, setCheckInfo] = useState<SystemUpdateCheckData | null>(null)
   const [displayVersion, setDisplayVersion] = useState(currentVersion || '')
 
   const uptime = startTime ? formatTimestamp(startTime) : t('Unknown')
   const version = displayVersion || currentVersion || t('Unknown')
+  const targetVersion = testModeEnabled
+    ? selectedVersion
+    : checkInfo?.latest_version
+
+  const loadReleases = useCallback(async () => {
+    setVersionsLoading(true)
+    setVersionsError(false)
+    try {
+      const body = await listSystemUpdateReleases()
+      if (!body.success) {
+        throw new Error(body.message || t('Failed to load available versions.'))
+      }
+      setReleases(body.data || [])
+      setSelectedVersion((current) =>
+        current && body.data.some((item) => item.tag_name === current)
+          ? current
+          : body.data[0]?.tag_name || null
+      )
+    } catch {
+      setReleases([])
+      setSelectedVersion(null)
+      setVersionsError(true)
+    } finally {
+      setVersionsLoading(false)
+    }
+  }, [t])
+
+  useEffect(() => {
+    if (testModeEnabled) {
+      void loadReleases()
+    } else {
+      setReleases([])
+      setSelectedVersion(null)
+      setVersionsError(false)
+    }
+  }, [loadReleases, testModeEnabled])
 
   const socketBlocked =
     checkInfo?.deploy_mode === 'docker' &&
@@ -77,8 +131,10 @@ export function UpdateCheckerSection({
   const pullDisabled =
     checking ||
     pulling ||
+    versionsLoading ||
     checkInfo?.enabled === false ||
-    socketBlocked
+    socketBlocked ||
+    (testModeEnabled && !selectedVersion)
 
   const handleCheckUpdates = useCallback(async () => {
     setChecking(true)
@@ -126,6 +182,34 @@ export function UpdateCheckerSection({
 
   const handlePullClick = async () => {
     if (pulling) return
+    if (testModeEnabled) {
+      if (!selectedVersion) {
+        toast.error(t('Select a target version.'))
+        return
+      }
+      if (selectedVersion === version) {
+        toast.success(
+          t('Selected version is already installed ({{version}}).', {
+            version: selectedVersion,
+          })
+        )
+        return
+      }
+      setCheckInfo((current) => ({
+        deploy_mode: current?.deploy_mode || 'binary',
+        current_version: version,
+        latest_version: selectedVersion,
+        has_update: true,
+        docker: current?.docker,
+        binary: current?.binary,
+        update_source: current?.update_source || 'ChinaToyHunter/new-api',
+        enabled: current?.enabled ?? true,
+        cached: false,
+      }))
+      setConfirmOpen(true)
+      return
+    }
+
     setChecking(true)
     try {
       const body = await checkSystemUpdate(true)
@@ -170,10 +254,17 @@ export function UpdateCheckerSection({
   }
 
   const handleConfirmPull = async () => {
+    const versionToInstall = testModeEnabled
+      ? selectedVersion || undefined
+      : undefined
+    if (testModeEnabled && !versionToInstall) {
+      toast.error(t('Select a target version.'))
+      return
+    }
     setConfirmOpen(false)
     setPulling(true)
     try {
-      const body = await performSystemUpdate()
+      const body = await performSystemUpdate(versionToInstall)
       if (!body.success) {
         throw new Error(body.message || t('Update failed'))
       }
@@ -192,7 +283,9 @@ export function UpdateCheckerSection({
         try {
           await restartSystem()
         } catch {
-          toast.message(t('Update completed. Please restart the service manually.'))
+          toast.message(
+            t('Update completed. Please restart the service manually.')
+          )
         }
         toast.message(t('Waiting for service to come back...'))
         const ready = await waitForServiceReady()
@@ -229,6 +322,21 @@ export function UpdateCheckerSection({
     }
   }
 
+  const buildConfirmDescription = () => {
+    if (!checkInfo || !targetVersion) return undefined
+    return testModeEnabled
+      ? t('Replace {{from}} with {{to}} using {{mode}} deployment?', {
+          from: checkInfo.current_version,
+          to: targetVersion,
+          mode: checkInfo.deploy_mode,
+        })
+      : t('Update from {{from}} to {{to}} ({{mode}})?', {
+          from: checkInfo.current_version,
+          to: targetVersion,
+          mode: checkInfo.deploy_mode,
+        })
+  }
+
   return (
     <>
       <SettingsSection title={t('System maintenance')}>
@@ -259,6 +367,36 @@ export function UpdateCheckerSection({
                 </>
               )}
             </Button>
+            {testModeEnabled && (
+              <Select
+                value={selectedVersion}
+                onValueChange={setSelectedVersion}
+                disabled={versionsLoading || pulling || releases.length === 0}
+              >
+                <SelectTrigger
+                  aria-label={t('Target version')}
+                  className='max-w-full min-w-44'
+                >
+                  <SelectValue
+                    placeholder={
+                      versionsLoading
+                        ? t('Loading versions...')
+                        : t('Select a target version')
+                    }
+                  />
+                </SelectTrigger>
+                <SelectContent align='start'>
+                  {releases.map((item) => (
+                    <SelectItem key={item.tag_name} value={item.tag_name}>
+                      {item.tag_name}
+                      {item.name && item.name !== item.tag_name
+                        ? ` · ${item.name}`
+                        : ''}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            )}
             <Button
               variant='default'
               onClick={handlePullClick}
@@ -269,12 +407,36 @@ export function UpdateCheckerSection({
               ) : (
                 <>
                   <ArrowDownToLineIcon className='me-2 h-4 w-4' />
-                  {t('Pull update')}
+                  {testModeEnabled ? t('Replace version') : t('Pull update')}
                 </>
               )}
             </Button>
           </div>
 
+          {testModeEnabled && versionsError && (
+            <div className='flex flex-wrap items-center gap-2' role='alert'>
+              <p className='text-destructive text-sm'>
+                {t('Failed to load available versions.')}
+              </p>
+              <Button
+                type='button'
+                variant='outline'
+                size='sm'
+                onClick={() => void loadReleases()}
+                disabled={versionsLoading || pulling}
+              >
+                {t('Retry')}
+              </Button>
+            </div>
+          )}
+          {testModeEnabled &&
+            !versionsLoading &&
+            !versionsError &&
+            releases.length === 0 && (
+              <p className='text-muted-foreground text-sm'>
+                {t('No available releases were found.')}
+              </p>
+            )}
           {socketBlocked && (
             <p className='text-muted-foreground text-sm'>
               {t(
@@ -298,15 +460,13 @@ export function UpdateCheckerSection({
       <Dialog
         open={confirmOpen}
         onOpenChange={setConfirmOpen}
-        title={t('Confirm update')}
+        title={
+          testModeEnabled
+            ? t('Confirm version replacement')
+            : t('Confirm update')
+        }
         description={
-          checkInfo
-            ? t('Update from {{from}} to {{to}} ({{mode}})?', {
-                from: checkInfo.current_version,
-                to: checkInfo.latest_version,
-                mode: checkInfo.deploy_mode,
-              })
-            : undefined
+          checkInfo && targetVersion ? buildConfirmDescription() : undefined
         }
         contentHeight='auto'
         footer={
@@ -318,8 +478,12 @@ export function UpdateCheckerSection({
             >
               {t('Close')}
             </Button>
-            <Button type='button' onClick={handleConfirmPull} disabled={pulling}>
-              {t('Pull update')}
+            <Button
+              type='button'
+              onClick={handleConfirmPull}
+              disabled={pulling}
+            >
+              {testModeEnabled ? t('Replace version') : t('Pull update')}
             </Button>
           </>
         }
@@ -375,7 +539,7 @@ export function UpdateCheckerSection({
               }}
             >
               <ArrowDownToLineIcon className='me-2 h-4 w-4' />
-              {t('Pull update')}
+              {testModeEnabled ? t('Replace version') : t('Pull update')}
             </Button>
           </>
         }

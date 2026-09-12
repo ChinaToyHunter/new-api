@@ -23,18 +23,31 @@ import (
 // ----------------------------------------------------------------------------
 
 type fakeGitHubClient struct {
-	release *ReleaseInfo
-	err     error
+	release  *ReleaseInfo
+	releases []ReleaseSummary
+	err      error
 
-	downloadData  []byte
-	checksumData  []byte
-	downloadErr   error
-	fetchBytesErr error
-	downloadCalls int
-	fetchCalls    int
+	fetchByTagCalls int
+	lastFetchedTag  string
+	downloadData    []byte
+	checksumData    []byte
+	downloadErr     error
+	fetchBytesErr   error
+	downloadCalls   int
+	fetchCalls      int
 }
 
 func (f *fakeGitHubClient) FetchLatestRelease(_ context.Context, _ string) (*ReleaseInfo, error) {
+	return f.release, f.err
+}
+
+func (f *fakeGitHubClient) ListReleases(_ context.Context, _ string, _ int) ([]ReleaseSummary, error) {
+	return append([]ReleaseSummary(nil), f.releases...), f.err
+}
+
+func (f *fakeGitHubClient) FetchReleaseByTag(_ context.Context, _ string, tag string) (*ReleaseInfo, error) {
+	f.fetchByTagCalls++
+	f.lastFetchedTag = tag
 	return f.release, f.err
 }
 
@@ -258,6 +271,81 @@ func TestService_Perform_AlreadyUpToDate(t *testing.T) {
 	assert.Equal(t, "v1.0.0", result.FromVersion)
 }
 
+func TestService_ListReleasesReturnsConfiguredRepositoryReleases(t *testing.T) {
+	gh := &fakeGitHubClient{releases: []ReleaseSummary{
+		{TagName: "v2.0.0", Name: "two"},
+		{TagName: "v1.0.0", Name: "one"},
+	}}
+	svc := newService(testConfig(), gh, nil, "v1.0.0")
+
+	releases, err := svc.ListReleases(context.Background(), 20)
+	require.NoError(t, err)
+	assert.Equal(t, gh.releases, releases)
+}
+
+func TestService_PerformVersion_AllowsUpgradeAndDowngrade(t *testing.T) {
+	for _, target := range []string{"v2.0.0", "v0.9.0"} {
+		t.Run(target, func(t *testing.T) {
+			resetGlobalCache(t)
+			t.Setenv("NEWAPI_DEPLOY_MODE", "docker")
+			binaryName := dockerTestBinaryNameForTag(target)
+			binary := []byte("verified release binary")
+			digest := sha256.Sum256(binary)
+			gh := &fakeGitHubClient{
+				release: makeRelease(target, []Asset{
+					{Name: binaryName, DownloadURL: "https://example.invalid/binary"},
+					{Name: "checksums-linux.txt", DownloadURL: "https://example.invalid/checksums"},
+				}),
+				downloadData: binary,
+				checksumData: []byte(fmt.Sprintf("%x  %s\n", digest, binaryName)),
+			}
+			docker := &fakeDockerEngine{inspectSelf: &ContainerInspect{Image: "sha256:base"}}
+
+			result, err := newService(testConfig(), gh, docker, "v1.0.0").PerformVersion(context.Background(), target)
+			require.NoError(t, err)
+			assert.Equal(t, target, result.ToVersion)
+			assert.Equal(t, target, gh.lastFetchedTag)
+			assert.Equal(t, "local/new-api:"+target, docker.buildTarget)
+			assert.Equal(t, "local/new-api:"+target, docker.recreateLocalImage)
+			assert.False(t, docker.recreateCalled)
+		})
+	}
+}
+
+func TestService_PerformVersion_CurrentVersionIsAlreadyUpToDate(t *testing.T) {
+	gh := &fakeGitHubClient{}
+	svc := newService(testConfig(), gh, nil, "v1.0.0")
+
+	result, err := svc.PerformVersion(context.Background(), "v1.0.0")
+	require.NoError(t, err)
+	assert.True(t, result.AlreadyUpToDate)
+	assert.Equal(t, "v1.0.0", result.ToVersion)
+	assert.Zero(t, gh.fetchByTagCalls)
+}
+
+func TestService_PerformVersion_DockerMissingReleaseAssetDoesNotUseRegistryFallback(t *testing.T) {
+	resetGlobalCache(t)
+	t.Setenv("NEWAPI_DEPLOY_MODE", "docker")
+	gh := &fakeGitHubClient{release: makeRelease("v0.9.0", nil)}
+	docker := &fakeDockerEngine{}
+	svc := newService(testConfig(), gh, docker, "v1.0.0")
+
+	_, err := svc.PerformVersion(context.Background(), "v0.9.0")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "no binary asset found")
+	assert.False(t, docker.recreateCalled)
+	assert.False(t, docker.recreateLocalCalled)
+}
+
+func TestService_PerformVersionRejectsReleaseTagMismatch(t *testing.T) {
+	gh := &fakeGitHubClient{release: makeRelease("v2.0.0", nil)}
+	svc := newService(testConfig(), gh, nil, "v1.0.0")
+
+	_, err := svc.PerformVersion(context.Background(), "v1.5.0")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "does not match requested tag")
+}
+
 // ----------------------------------------------------------------------------
 // TestService_Perform_Lock
 // ----------------------------------------------------------------------------
@@ -343,6 +431,14 @@ func (b *blockingGitHubClient) FetchLatestRelease(ctx context.Context, _ string)
 		return nil, ctx.Err()
 	}
 	return b.release, nil
+}
+
+func (b *blockingGitHubClient) ListReleases(context.Context, string, int) ([]ReleaseSummary, error) {
+	return nil, nil
+}
+
+func (b *blockingGitHubClient) FetchReleaseByTag(ctx context.Context, _ string, _ string) (*ReleaseInfo, error) {
+	return b.FetchLatestRelease(ctx, "")
 }
 
 func (b *blockingGitHubClient) Download(_ context.Context, _, _ string, _ int64) error { return nil }
@@ -535,13 +631,17 @@ func TestService_Perform_Docker_ReleaseBinaryBuildsLocalImageAndEnablesComposeSy
 }
 
 func dockerTestBinaryName() string {
+	return dockerTestBinaryNameForTag("v2.0.0")
+}
+
+func dockerTestBinaryNameForTag(tag string) string {
 	switch runtime.GOARCH {
 	case "arm64":
-		return "new-api-arm64-v2.0.0"
+		return "new-api-arm64-" + tag
 	case "amd64":
-		return "new-api-v2.0.0"
+		return "new-api-" + tag
 	default:
-		return "new-api-linux-" + runtime.GOARCH + "-v2.0.0"
+		return "new-api-linux-" + runtime.GOARCH + "-" + tag
 	}
 }
 

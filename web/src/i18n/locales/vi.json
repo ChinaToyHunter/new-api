@@ -5664,6 +5664,17 @@
     "Top-up account-group ratios": "Hệ số nạp tiền theo nhóm tài khoản",
     "Use as default": "Dùng làm mặc định",
     "User-selectable": "Người dùng có thể chọn",
-    "group_special_usable_group maps account groups to route-group visibility. Add or hide route groups for users in each account group.": "group_special_usable_group ánh xạ nhóm tài khoản tới khả năng hiển thị nhóm định tuyến. Thêm hoặc ẩn nhóm định tuyến cho người dùng trong từng nhóm tài khoản."
+    "group_special_usable_group maps account groups to route-group visibility. Add or hide route groups for users in each account group.": "group_special_usable_group ánh xạ nhóm tài khoản tới khả năng hiển thị nhóm định tuyến. Thêm hoặc ẩn nhóm định tuyến cho người dùng trong từng nhóm tài khoản.",
+    "Allow selecting an available release for upgrade or rollback on the system maintenance page": "Cho phép chọn một bản phát hành khả dụng để nâng cấp hoặc hoàn tác trên trang bảo trì hệ thống",
+    "Confirm version replacement": "Xác nhận thay thế phiên bản",
+    "Loading versions...": "Đang tải danh sách phiên bản...",
+    "Replace version": "Chuyển sang phiên bản này",
+    "Target version": "Phiên bản đích",
+    "Select a target version": "Chọn phiên bản đích",
+    "Select a target version.": "Vui lòng chọn phiên bản đích trước.",
+    "Selected version is already installed ({{version}}).": "Phiên bản đã chọn đang được chạy ({{version}}).",
+    "Failed to load available versions.": "Không tải được danh sách phiên bản khả dụng.",
+    "No available releases were found.": "Không tìm thấy bản phát hành khả dụng.",
+    "Replace {{from}} with {{to}} using {{mode}} deployment?": "Thay {{from}} bằng {{to}} qua phương thức triển khai {{mode}}?"
   }
 }

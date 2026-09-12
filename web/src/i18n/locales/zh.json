@@ -5664,6 +5664,17 @@
     "Top-up account-group ratios": "充值账户分组倍率",
     "Use as default": "设为默认",
     "User-selectable": "用户可选",
-    "group_special_usable_group maps account groups to route-group visibility. Add or hide route groups for users in each account group.": "group_special_usable_group 将账户分组映射到路由分组可见性。可为每个账户分组的用户添加或隐藏路由分组。"
+    "group_special_usable_group maps account groups to route-group visibility. Add or hide route groups for users in each account group.": "group_special_usable_group 将账户分组映射到路由分组可见性。可为每个账户分组的用户添加或隐藏路由分组。",
+    "Allow selecting an available release for upgrade or rollback on the system maintenance page": "允许在系统维护页选择可用版本进行升级或回退",
+    "Confirm version replacement": "确认切换版本",
+    "Loading versions...": "正在加载版本列表...",
+    "Replace version": "切换到此版本",
+    "Target version": "目标版本",
+    "Select a target version": "请选择目标版本",
+    "Select a target version.": "请先选择目标版本。",
+    "Selected version is already installed ({{version}}).": "所选版本已是当前运行版本（{{version}}）。",
+    "Failed to load available versions.": "可用版本列表加载失败。",
+    "No available releases were found.": "未找到可用的 Release 版本。",
+    "Replace {{from}} with {{to}} using {{mode}} deployment?": "将使用 {{mode}} 部署把 {{from}} 替换为 {{to}}？"
   }
 }

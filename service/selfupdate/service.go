@@ -190,6 +190,48 @@ func (s *Service) check(ctx context.Context, force bool, dockerEng DockerEngine)
 	return info, nil
 }
 
+func (s *Service) resolveTarget(ctx context.Context, targetVersion string) (*Info, error) {
+	if !isSafeReleaseTag(targetVersion) {
+		return nil, errors.New("invalid release tag")
+	}
+
+	mode := DetectDeployMode()
+	dockerCap := s.probeDockerCap(ctx, s.docker)
+	if CompareVersions(s.currentVersion, targetVersion) == 0 {
+		info := s.upToDateInfo(mode, &dockerCap, "")
+		info.LatestVersion = targetVersion
+		return info, nil
+	}
+
+	release, err := s.gh.FetchReleaseByTag(ctx, s.cfg.Repo, targetVersion)
+	if err != nil {
+		return nil, err
+	}
+	if release == nil || release.TagName != targetVersion {
+		return nil, fmt.Errorf("resolved release does not match requested tag %q", targetVersion)
+	}
+
+	binCap := &BinaryCapability{Platform: runtime.GOOS + "/" + runtime.GOARCH}
+	_, _, assetErr := SelectReleaseBinaryAsset(release, runtime.GOOS, runtime.GOARCH)
+	if assetErr == nil {
+		binCap.AssetFound = true
+	} else {
+		binCap.Reason = assetErr.Error()
+	}
+
+	return &Info{
+		Enabled:        true,
+		DeployMode:     mode,
+		CurrentVersion: s.currentVersion,
+		LatestVersion:  targetVersion,
+		HasUpdate:      true,
+		Release:        release,
+		Binary:         binCap,
+		Docker:         &dockerCap,
+		UpdateSource:   s.cfg.Repo,
+	}, nil
+}
+
 // upToDateInfo builds a successful Check payload with has_update=false.
 func (s *Service) upToDateInfo(mode DeployMode, dockerCap *DockerCapability, warning string) *Info {
 	binCap := &BinaryCapability{
@@ -230,9 +272,28 @@ func (s *Service) probeDockerCap(ctx context.Context, dockerEng DockerEngine) Do
 	return ProbeDocker(ctx, s.cfg.DockerHost, s.cfg.DockerImage)
 }
 
+// ListReleases returns published release choices for explicit version switching.
+func (s *Service) ListReleases(ctx context.Context, limit int) ([]ReleaseSummary, error) {
+	if !s.cfg.Enabled {
+		return nil, ErrUpdateDisabled
+	}
+	return s.gh.ListReleases(ctx, s.cfg.Repo, limit)
+}
+
 // Perform runs the update. It acquires a single-flight lock; a second
 // concurrent call returns ErrUpdateInProgress immediately.
 func (s *Service) Perform(ctx context.Context) (*PerformResult, error) {
+	return s.perform(ctx, "")
+}
+
+// PerformVersion replaces the current version with an exact GitHub release.
+// Both upgrades and downgrades are permitted; matching platform assets and
+// checksums remain mandatory.
+func (s *Service) PerformVersion(ctx context.Context, targetVersion string) (*PerformResult, error) {
+	return s.perform(ctx, targetVersion)
+}
+
+func (s *Service) perform(ctx context.Context, targetVersion string) (*PerformResult, error) {
 	if !s.cfg.Enabled {
 		return nil, ErrUpdateDisabled
 	}
@@ -254,9 +315,15 @@ func (s *Service) Perform(ctx context.Context) (*PerformResult, error) {
 
 	s.setStatus(PhaseChecking, "checking for updates", true, "")
 
-	// force=true on the GH side, but we still use a cached docker probe if
-	// an injected engine is present (avoids hitting a real socket in tests).
-	info, err := s.check(ctx, true, s.docker)
+	var info *Info
+	var err error
+	if targetVersion == "" {
+		// force=true on the GH side, but we still use a cached docker probe if
+		// an injected engine is present (avoids hitting a real socket in tests).
+		info, err = s.check(ctx, true, s.docker)
+	} else {
+		info, err = s.resolveTarget(ctx, targetVersion)
+	}
 	if err != nil {
 		s.setStatus(PhaseFailed, "check failed", false, err.Error())
 		return nil, err
@@ -302,6 +369,17 @@ func (s *Service) Perform(ctx context.Context) (*PerformResult, error) {
 		}, nil
 
 	case DeployModeDocker:
+		if targetVersion != "" {
+			if info.Release == nil {
+				err = errors.New("release information is required for an exact version update")
+			} else if !hasDockerReleaseBinary(info.Release) {
+				_, _, err = SelectReleaseBinaryAsset(info.Release, "linux", runtime.GOARCH)
+			}
+			if err != nil {
+				s.setStatus(PhaseFailed, "docker release asset unavailable", false, err.Error())
+				return nil, err
+			}
+		}
 		if info.Docker == nil || !info.Docker.SocketAvailable {
 			reason := "docker socket unavailable"
 			if info.Docker != nil && info.Docker.Reason != "" {

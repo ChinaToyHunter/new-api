@@ -35,6 +35,14 @@ type ReleaseInfo struct {
 	Assets      []Asset `json:"assets"`
 }
 
+// ReleaseSummary is the safe, compact release metadata exposed to the UI.
+type ReleaseSummary struct {
+	TagName     string `json:"tag_name"`
+	Name        string `json:"name,omitempty"`
+	PublishedAt string `json:"published_at,omitempty"`
+	Prerelease  bool   `json:"prerelease,omitempty"`
+}
+
 // Info is the full update-check result returned to callers.
 type Info struct {
 	DeployMode     DeployMode        `json:"deploy_mode"`

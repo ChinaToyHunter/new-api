@@ -5664,6 +5664,17 @@
     "Top-up account-group ratios": "Коэффициенты пополнения для групп аккаунтов",
     "Use as default": "Использовать по умолчанию",
     "User-selectable": "Доступно для выбора пользователем",
-    "group_special_usable_group maps account groups to route-group visibility. Add or hide route groups for users in each account group.": "group_special_usable_group сопоставляет группы аккаунтов с видимостью групп маршрутизации. Добавляйте или скрывайте группы маршрутизации для пользователей каждой группы аккаунтов."
+    "group_special_usable_group maps account groups to route-group visibility. Add or hide route groups for users in each account group.": "group_special_usable_group сопоставляет группы аккаунтов с видимостью групп маршрутизации. Добавляйте или скрывайте группы маршрутизации для пользователей каждой группы аккаунтов.",
+    "Allow selecting an available release for upgrade or rollback on the system maintenance page": "Разрешить выбор доступной версии для обновления или отката на странице обслуживания системы",
+    "Confirm version replacement": "Подтвердить замену версии",
+    "Loading versions...": "Загрузка версий...",
+    "Replace version": "Перейти на эту версию",
+    "Target version": "Целевая версия",
+    "Select a target version": "Выберите целевую версию",
+    "Select a target version.": "Сначала выберите целевую версию.",
+    "Selected version is already installed ({{version}}).": "Выбранная версия уже установлена ({{version}}).",
+    "Failed to load available versions.": "Не удалось загрузить список доступных версий.",
+    "No available releases were found.": "Доступные релизы не найдены.",
+    "Replace {{from}} with {{to}} using {{mode}} deployment?": "Заменить {{from}} на {{to}} с развёртыванием {{mode}}?"
   }
 }
