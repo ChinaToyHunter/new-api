@@ -44,7 +44,7 @@ import {
   editTagChannels,
   getTagModels,
   getAllModels,
-  getGroups,
+  getRouteGroups,
 } from '../../api'
 import { channelsQueryKeys } from '../../lib'
 import type { TagOperationParams } from '../../types'
@@ -84,8 +84,8 @@ export function EditTagDialog({ open, onOpenChange }: EditTagDialogProps) {
 
   // Fetch groups
   const { data: groupsData } = useQuery({
-    queryKey: ['groups'],
-    queryFn: getGroups,
+    queryKey: ['route-groups'],
+    queryFn: getRouteGroups,
     enabled: open,
   })
 
@@ -304,12 +304,10 @@ export function EditTagDialog({ open, onOpenChange }: EditTagDialogProps) {
 
                 <div className='flex gap-2'>
                   <Select<string>
-                    items={[
-                      ...availableModels.map((model) => ({
-                        value: model,
-                        label: model,
-                      })),
-                    ]}
+                    items={availableModels.map((model) => ({
+                      value: model,
+                      label: model,
+                    }))}
                     onValueChange={(value) => {
                       if (value === null) return
                       if (!selectedModels.includes(value)) {

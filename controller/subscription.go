@@ -1,14 +1,15 @@
 package controller
 
 import (
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/setting"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
-	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 )
@@ -201,14 +202,14 @@ func AdminCreateSubscriptionPlan(c *gin.Context) {
 	}
 	req.Plan.UpgradeGroup = strings.TrimSpace(req.Plan.UpgradeGroup)
 	if req.Plan.UpgradeGroup != "" {
-		if _, ok := ratio_setting.GetGroupRatioCopy()[req.Plan.UpgradeGroup]; !ok {
+		if !setting.ContainsAccountGroup(req.Plan.UpgradeGroup) {
 			common.ApiErrorMsg(c, "升级分组不存在")
 			return
 		}
 	}
 	req.Plan.DowngradeGroup = strings.TrimSpace(req.Plan.DowngradeGroup)
 	if req.Plan.DowngradeGroup != "" {
-		if _, ok := ratio_setting.GetGroupRatioCopy()[req.Plan.DowngradeGroup]; !ok {
+		if !setting.ContainsAccountGroup(req.Plan.DowngradeGroup) {
 			common.ApiErrorMsg(c, "降级分组不存在")
 			return
 		}
@@ -276,19 +277,7 @@ func AdminUpdateSubscriptionPlan(c *gin.Context) {
 		return
 	}
 	req.Plan.UpgradeGroup = strings.TrimSpace(req.Plan.UpgradeGroup)
-	if req.Plan.UpgradeGroup != "" {
-		if _, ok := ratio_setting.GetGroupRatioCopy()[req.Plan.UpgradeGroup]; !ok {
-			common.ApiErrorMsg(c, "升级分组不存在")
-			return
-		}
-	}
 	req.Plan.DowngradeGroup = strings.TrimSpace(req.Plan.DowngradeGroup)
-	if req.Plan.DowngradeGroup != "" {
-		if _, ok := ratio_setting.GetGroupRatioCopy()[req.Plan.DowngradeGroup]; !ok {
-			common.ApiErrorMsg(c, "降级分组不存在")
-			return
-		}
-	}
 	req.Plan.QuotaResetPeriod = model.NormalizeResetPeriod(req.Plan.QuotaResetPeriod)
 	if req.Plan.QuotaResetPeriod == model.SubscriptionResetCustom && req.Plan.QuotaResetCustomSeconds <= 0 {
 		common.ApiErrorMsg(c, "自定义重置周期需大于0秒")
@@ -296,6 +285,20 @@ func AdminUpdateSubscriptionPlan(c *gin.Context) {
 	}
 
 	err := model.DB.Transaction(func(tx *gorm.DB) error {
+		currentPlan, err := model.GetSubscriptionPlanForUpdateTx(tx, id)
+		if err != nil {
+			return err
+		}
+		if req.Plan.UpgradeGroup != "" &&
+			!setting.ContainsAccountGroup(req.Plan.UpgradeGroup) &&
+			req.Plan.UpgradeGroup != currentPlan.UpgradeGroup {
+			return errors.New("升级分组不存在")
+		}
+		if req.Plan.DowngradeGroup != "" &&
+			!setting.ContainsAccountGroup(req.Plan.DowngradeGroup) &&
+			req.Plan.DowngradeGroup != currentPlan.DowngradeGroup {
+			return errors.New("降级分组不存在")
+		}
 		// update plan (allow zero values updates with map)
 		updateMap := map[string]interface{}{
 			"title":                      req.Plan.Title,

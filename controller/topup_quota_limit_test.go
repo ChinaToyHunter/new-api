@@ -233,3 +233,15 @@ func TestStripeCreditedQuotaUsesDisplayAwarePurchaseUnits(t *testing.T) {
 	require.NoError(t, common.UpdateTopupGroupRatioByJSONString(`{"free":0}`))
 	assert.True(t, decimal.NewFromInt(500000).Equal(getStripeCreditedQuota(1, "free")))
 }
+
+func TestTopupGroupRatioRejectsNegativeAndPreservesExistingRatios(t *testing.T) {
+	original := common.TopupGroupRatio2JSONString()
+	t.Cleanup(func() { require.NoError(t, common.UpdateTopupGroupRatioByJSONString(original)) })
+	require.NoError(t, common.UpdateTopupGroupRatioByJSONString(`{"default":1,"vip":1.25}`))
+
+	err := common.UpdateTopupGroupRatioByJSONString(`{"default":-0.5}`)
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "top-up group ratio must be not less than 0: default")
+	assert.JSONEq(t, `{"default":1,"vip":1.25}`, common.TopupGroupRatio2JSONString())
+}

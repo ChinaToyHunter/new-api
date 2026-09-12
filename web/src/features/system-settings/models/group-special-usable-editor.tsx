@@ -170,14 +170,16 @@ function GroupSelect(props: GroupSelectProps) {
 
 type GroupSpecialUsableRulesEditorProps = {
   value: string
-  groupOptions: string[]
+  accountGroupOptions: string[]
+  routeGroupOptions: string[]
   onChange: (value: string) => void
 }
 
 type GroupSectionProps = {
   groupName: string
   items: Rule[]
-  groupOptions: string[]
+  accountGroupOptions: string[]
+  routeGroupOptions: string[]
   onUpdate: (id: string, field: keyof Rule, val: string | boolean) => void
   onRemove: (id: string) => void
   onAdd: (groupName: string) => void
@@ -187,7 +189,7 @@ type GroupSectionProps = {
 function GroupSection(props: GroupSectionProps) {
   const { t } = useTranslation()
   const [open, setOpen] = useState(false)
-  const isKnownGroup = props.groupOptions.includes(props.groupName)
+  const isKnownGroup = props.accountGroupOptions.includes(props.groupName)
 
   return (
     <Collapsible open={open} onOpenChange={setOpen}>
@@ -209,7 +211,7 @@ function GroupSection(props: GroupSectionProps) {
             {!isKnownGroup && (
               <StatusBadge variant='danger' copyable={false}>
                 <AlertTriangle className='mr-1 h-3 w-3' />
-                {t('Not in pricing table')}
+                {t('Not in account group catalog')}
               </StatusBadge>
             )}
             <StatusBadge variant='neutral' copyable={false}>
@@ -277,7 +279,7 @@ function GroupSection(props: GroupSectionProps) {
                 <div className='flex flex-1 items-center gap-1.5'>
                   <GroupSelect
                     className='flex-1'
-                    options={props.groupOptions}
+                    options={props.routeGroupOptions}
                     value={rule.targetGroup}
                     placeholder={t('Group name')}
                     onValueChange={(v) =>
@@ -285,10 +287,10 @@ function GroupSection(props: GroupSectionProps) {
                     }
                   />
                   {rule.targetGroup &&
-                    !props.groupOptions.includes(rule.targetGroup) && (
+                    !props.routeGroupOptions.includes(rule.targetGroup) && (
                       <AlertTriangle
                         className='text-destructive h-4 w-4 shrink-0'
-                        aria-label={t('Not in pricing table')}
+                        aria-label={t('Not in route group catalog')}
                       />
                     )}
                 </div>
@@ -401,16 +403,16 @@ export function GroupSpecialUsableRulesEditor(
 
   const newGroupCandidates = useMemo(() => {
     const used = new Set(grouped.map((g) => g.name))
-    return props.groupOptions.filter((name) => !used.has(name))
-  }, [grouped, props.groupOptions])
+    return props.accountGroupOptions.filter((name) => !used.has(name))
+  }, [grouped, props.accountGroupOptions])
 
   return (
     <Card className={sectionCardClassName}>
       <CardHeader className={sectionHeaderClassName}>
-        <CardTitle>{t('Special usable group rules')}</CardTitle>
+        <CardTitle>{t('Account-to-route visibility rules')}</CardTitle>
         <CardDescription>
           {t(
-            'Make extra groups visible to, or hide default groups from, users of a specific group.'
+            'group_special_usable_group maps account groups to route-group visibility. Add or hide route groups for users in each account group.'
           )}
         </CardDescription>
       </CardHeader>
@@ -426,7 +428,8 @@ export function GroupSpecialUsableRulesEditor(
                 key={group.name}
                 groupName={group.name}
                 items={group.items}
-                groupOptions={props.groupOptions}
+                accountGroupOptions={props.accountGroupOptions}
+                routeGroupOptions={props.routeGroupOptions}
                 onUpdate={updateRule}
                 onRemove={removeRule}
                 onAdd={addRuleToGroup}

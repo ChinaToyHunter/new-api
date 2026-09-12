@@ -17,7 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { render, screen, within } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import i18next from 'i18next'
 import { beforeEach, beforeAll, describe, expect, test, vi } from 'vitest'
@@ -44,10 +44,8 @@ vi.mock('../../api', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../api')>()
   return {
     ...actual,
-    getUserModels: vi.fn(async () => [
-      { label: 'gpt-4o', value: 'gpt-4o' },
-    ]),
-    getUserGroups: vi.fn(async () => [
+    getUserModels: vi.fn(async () => [{ label: 'gpt-4o', value: 'gpt-4o' }]),
+    getUserRouteGroups: vi.fn(async () => [
       { label: 'default', value: 'default', ratio: 1 },
     ]),
   }
@@ -66,9 +64,35 @@ beforeAll(() => {
 
 beforeEach(() => {
   localStorage.clear()
+  queryClient.clear()
 })
 
 describe('Playground mode switching', () => {
+  test('does not reuse the API key response cache shape for playground groups', async () => {
+    const keysResponse = {
+      success: true,
+      data: {
+        auto: { desc: 'Automatic routing', ratio: 'auto' },
+        default: { desc: 'Standard access', ratio: 1 },
+      },
+    }
+    queryClient.setQueryDefaults(['user-route-groups'], {
+      staleTime: Infinity,
+    })
+    queryClient.setQueryData(['user-route-groups'], keysResponse, {
+      updatedAt: Date.now(),
+    })
+
+    renderPlayground()
+
+    await waitFor(() => {
+      expect(queryClient.getQueryData(['playground-route-groups'])).toEqual([
+        { label: 'default', value: 'default', ratio: 1 },
+      ])
+    })
+    expect(queryClient.getQueryData(['user-route-groups'])).toBe(keysResponse)
+  })
+
   test('defaults to chat mode and switches to image without clearing chat config', async () => {
     const user = userEvent.setup()
     localStorage.setItem(
@@ -109,8 +133,6 @@ describe('Playground mode switching', () => {
       within(screen.getByRole('tablist')).getByRole('tab', { name: 'Image' })
     )
 
-    expect(
-      localStorage.getItem(STORAGE_KEYS.IMAGE_CONFIG)
-    ).toBeNull()
+    expect(localStorage.getItem(STORAGE_KEYS.IMAGE_CONFIG)).toBeNull()
   })
 })

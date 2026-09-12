@@ -132,6 +132,7 @@ func InitOptionMap() {
 	common.OptionMap["Chats"] = setting.Chats2JsonString()
 	common.OptionMap["AutoGroups"] = setting.AutoGroups2JsonString()
 	common.OptionMap["DefaultUseAutoGroup"] = strconv.FormatBool(setting.DefaultUseAutoGroup)
+	common.OptionMap[setting.AccountGroupsOptionKey] = setting.AccountGroups2JSONString()
 	common.OptionMap["DefaultUserGroup"] = setting.GetDefaultUserGroup()
 	common.OptionMap["MaxTokenAutoGroups"] = strconv.Itoa(setting.GetMaxTokenAutoGroups())
 	common.OptionMap["PayMethods"] = operation_setting.PayMethods2JsonString()
@@ -203,7 +204,27 @@ func InitOptionMap() {
 
 func loadOptionsFromDatabase() {
 	options, _ := AllOption()
+	optionValues := make(map[string]string, len(options))
 	for _, option := range options {
+		optionValues[option.Key] = option.Value
+	}
+	defaultGroup := optionValues["DefaultUserGroup"]
+	if defaultGroup == "" {
+		defaultGroup = setting.GetDefaultUserGroup()
+	}
+	accountGroupsJSON, hasCanonicalAccountGroups := optionValues[setting.AccountGroupsOptionKey]
+	if err := setting.LoadAccountGroupOptions(accountGroupsJSON, defaultGroup, hasCanonicalAccountGroups); err != nil {
+		common.SysLog("failed to load account group options: " + err.Error())
+	} else {
+		common.OptionMapRWMutex.Lock()
+		common.OptionMap[setting.AccountGroupsOptionKey] = setting.AccountGroups2JSONString()
+		common.OptionMap["DefaultUserGroup"] = setting.GetDefaultUserGroup()
+		common.OptionMapRWMutex.Unlock()
+	}
+	for _, option := range options {
+		if option.Key == setting.AccountGroupsOptionKey || option.Key == "DefaultUserGroup" {
+			continue
+		}
 		err := updateOptionMap(option.Key, option.Value)
 		if err != nil {
 			common.SysLog("failed to update option map: " + err.Error())
@@ -232,8 +253,45 @@ func validateOptionValue(key string, value string) error {
 	if key == "MaxTokenAutoGroups" {
 		return setting.ValidateMaxTokenAutoGroups(value)
 	}
+	if key == setting.AccountGroupsOptionKey {
+		return setting.ValidateAccountGroupsJSON(value)
+	}
 	if key == "DefaultUserGroup" {
 		return setting.ValidateDefaultUserGroup(value)
+	}
+	if key == "GroupRatio" {
+		return ratio_setting.CheckGroupRatio(value)
+	}
+	if key == "GroupGroupRatio" {
+		return ratio_setting.CheckGroupGroupRatio(value)
+	}
+	if key == "TopupGroupRatio" {
+		return common.CheckTopupGroupRatio(value)
+	}
+	return nil
+}
+
+func validateOptions(values map[string]string) error {
+	accountGroupsJSON, updatesAccountGroups := values[setting.AccountGroupsOptionKey]
+	defaultGroup, updatesDefaultGroup := values["DefaultUserGroup"]
+	if updatesAccountGroups || updatesDefaultGroup {
+		if !updatesAccountGroups {
+			accountGroupsJSON = setting.AccountGroups2JSONString()
+		}
+		if !updatesDefaultGroup {
+			defaultGroup = setting.GetDefaultUserGroup()
+		}
+		if err := setting.ValidateAccountGroupSettingsJSON(accountGroupsJSON, defaultGroup); err != nil {
+			return err
+		}
+	}
+	for key, value := range values {
+		if key == setting.AccountGroupsOptionKey || key == "DefaultUserGroup" {
+			continue
+		}
+		if err := validateOptionValue(key, value); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -247,29 +305,29 @@ func UpdateOption(key string, value string) error {
 		Key: key,
 	}
 	// https://gorm.io/docs/update.html#Save-All-Fields
-	DB.FirstOrCreate(&option, Option{Key: key})
+	if err := DB.FirstOrCreate(&option, Option{Key: key}).Error; err != nil {
+		return err
+	}
 	option.Value = value
 	// Save is a combination function.
 	// If save value does not contain primary key, it will execute Create,
 	// otherwise it will execute Update (with all fields).
-	DB.Save(&option)
+	if err := DB.Save(&option).Error; err != nil {
+		return err
+	}
 	// Update OptionMap
 	return updateOptionMap(key, value)
 }
 
-// UpdateOptionsBulk persists multiple key/value pairs in a single database
-// transaction, then dispatches them through updateOptionMap in one pass. If
-// any DB write fails the whole transaction rolls back and no in-memory state
-// is touched — safe for callers that must commit a set of related options
-// atomically (e.g. payment gateway binding).
+// UpdateOptionsBulk persists multiple key/value pairs in one database
+// transaction, then applies the validated settings to in-memory state. If a
+// database write fails, the transaction rolls back before memory is touched.
 func UpdateOptionsBulk(values map[string]string) error {
 	if len(values) == 0 {
 		return nil
 	}
-	for key, value := range values {
-		if err := validateOptionValue(key, value); err != nil {
-			return err
-		}
+	if err := validateOptions(values); err != nil {
+		return err
 	}
 	err := DB.Transaction(func(tx *gorm.DB) error {
 		for k, v := range values {
@@ -287,7 +345,24 @@ func UpdateOptionsBulk(values map[string]string) error {
 	if err != nil {
 		return err
 	}
+	accountGroupsJSON, updatesAccountGroups := values[setting.AccountGroupsOptionKey]
+	if updatesAccountGroups {
+		defaultGroup := setting.GetDefaultUserGroup()
+		if value, ok := values["DefaultUserGroup"]; ok {
+			defaultGroup = value
+		}
+		if err := setting.UpdateAccountGroupSettingsByJSONString(accountGroupsJSON, defaultGroup); err != nil {
+			return err
+		}
+		common.OptionMapRWMutex.Lock()
+		common.OptionMap[setting.AccountGroupsOptionKey] = accountGroupsJSON
+		common.OptionMap["DefaultUserGroup"] = defaultGroup
+		common.OptionMapRWMutex.Unlock()
+	}
 	for k, v := range values {
+		if k == setting.AccountGroupsOptionKey || (k == "DefaultUserGroup" && updatesAccountGroups) {
+			continue
+		}
 		if err := updateOptionMap(k, v); err != nil {
 			return err
 		}
@@ -422,6 +497,11 @@ func updateOptionMap(key string, value string) (err error) {
 	}
 	if key == "DefaultUserGroup" {
 		setting.SetDefaultUserGroup(value)
+	}
+	if key == setting.AccountGroupsOptionKey {
+		if err := setting.UpdateAccountGroupsByJSONString(value); err != nil {
+			return err
+		}
 	}
 	if key == setting.TaskPluginDisabledFactoryKeysKey {
 		jsplugin.DefaultRegistry.SetDisabledFactoryKeys(setting.ParseTaskPluginDisabledFactoryKeys(value))

@@ -89,8 +89,8 @@ export async function getUserModels(
 /**
  * Get user groups
  */
-export async function getUserGroups(): Promise<GroupOption[]> {
-  const res = await api.get(API_ENDPOINTS.USER_GROUPS)
+export async function getUserRouteGroups(): Promise<GroupOption[]> {
+  const res = await api.get(API_ENDPOINTS.USER_ROUTE_GROUPS)
   const { data } = res
 
   if (!data.success || !data.data) {

@@ -156,10 +156,18 @@ export async function resetUserTwoFA(id: number): Promise<ApiResponse> {
 }
 
 /**
- * Get all available groups
+ * Get account groups available for assigning to users and subscriptions.
  */
-export async function getGroups(): Promise<ApiResponse<string[]>> {
-  const res = await api.get('/api/group/')
+export async function getAccountGroups(): Promise<ApiResponse<string[]>> {
+  const res = await api.get<ApiResponse<string[]>>('/api/account-groups/')
+  return res.data
+}
+
+/**
+ * Get the route-group catalog used by channels and other admin routing UIs.
+ */
+export async function getRouteGroups(): Promise<ApiResponse<string[]>> {
+  const res = await api.get<ApiResponse<string[]>>('/api/route-groups/')
   return res.data
 }
 

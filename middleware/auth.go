@@ -351,6 +351,22 @@ func TokenAuthReadOnly() func(c *gin.Context) {
 	}
 }
 
+func resolveTokenUsingGroup(userGroup, tokenGroup string) (string, error) {
+	if tokenGroup == "auto" {
+		// auto is a routing policy, not an entry in UserUsableGroups. Its
+		// ordered route candidates are validated when the distributor selects a
+		// channel, after SetupContextForToken has loaded the token snapshot.
+		return tokenGroup, nil
+	}
+	if _, ok := service.GetUserUsableGroups(userGroup)[tokenGroup]; !ok {
+		return "", fmt.Errorf("无权访问 %s 分组", tokenGroup)
+	}
+	if !ratio_setting.ContainsGroupRatio(tokenGroup) {
+		return "", fmt.Errorf("分组 %s 已被弃用", tokenGroup)
+	}
+	return tokenGroup, nil
+}
+
 func TokenAuth() func(c *gin.Context) {
 	return func(c *gin.Context) {
 		// 先检测是否为ws
@@ -461,19 +477,12 @@ func TokenAuth() func(c *gin.Context) {
 		userGroup := userCache.Group
 		tokenGroup := token.Group
 		if tokenGroup != "" {
-			// check common.UserUsableGroups[userGroup]
-			if _, ok := service.GetUserUsableGroups(userGroup)[tokenGroup]; !ok {
-				abortWithOpenAiMessage(c, http.StatusForbidden, fmt.Sprintf("无权访问 %s 分组", tokenGroup))
+			resolvedGroup, resolveErr := resolveTokenUsingGroup(userGroup, tokenGroup)
+			if resolveErr != nil {
+				abortWithOpenAiMessage(c, http.StatusForbidden, resolveErr.Error())
 				return
 			}
-			// check group in common.GroupRatio
-			if !ratio_setting.ContainsGroupRatio(tokenGroup) {
-				if tokenGroup != "auto" {
-					abortWithOpenAiMessage(c, http.StatusForbidden, fmt.Sprintf("分组 %s 已被弃用", tokenGroup))
-					return
-				}
-			}
-			userGroup = tokenGroup
+			userGroup = resolvedGroup
 		}
 		common.SetContextKey(c, constant.ContextKeyUsingGroup, userGroup)
 

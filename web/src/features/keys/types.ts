@@ -96,6 +96,10 @@ export interface ApiKeyFormData {
   cross_group_retry: boolean
 }
 
+export type ApiKeyUpdateData = Omit<ApiKeyFormData, 'group'> & {
+  group?: ApiKeyFormData['group']
+}
+
 export interface TokenAutoGroupsConfig {
   groups: string[]
   max_count: number

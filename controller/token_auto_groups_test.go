@@ -326,3 +326,101 @@ func TestUpdateTokenGroupOmittedPreservesEmptyExplicitBecomesAuto(t *testing.T) 
 		})
 	}
 }
+
+func TestUpdateTokenCrossGroupRetryPresenceAndStatusOnly(t *testing.T) {
+	tests := []struct {
+		name          string
+		includeField  bool
+		retryValue    any
+		expectedRetry bool
+	}{
+		{name: "omitted preserves enabled retry", expectedRetry: true},
+		{name: "explicit false disables retry", includeField: true, retryValue: false, expectedRetry: false},
+		{name: "explicit true enables retry", includeField: true, retryValue: true, expectedRetry: true},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			configureTokenAutoGroupsTest(t, "5", `["default","vip"]`)
+			user := setupTokenAutoGroupsControllerTest(t)
+			token := seedToken(t, model.DB, user.Id, "retry-"+test.name, "retry-key-"+common.GetRandomString(8))
+			token.Group = "auto"
+			token.CrossGroupRetry = true
+			require.NoError(t, token.SetAutoGroups([]string{"vip", "default"}))
+			require.NoError(t, model.DB.Save(token).Error)
+
+			request := baseAutoTokenRequest("updated-" + test.name)
+			request["id"] = token.Id
+			request["status"] = common.TokenStatusEnabled
+			request["name"] = token.Name
+			request["group"] = "auto"
+			if test.includeField {
+				request["cross_group_retry"] = test.retryValue
+			} else {
+				delete(request, "cross_group_retry")
+			}
+
+			ctx, recorder := newTokenAutoGroupsAuthenticatedContext(t, http.MethodPut, "/api/token/", request, user.Id)
+			UpdateToken(ctx)
+			response := decodeAPIResponse(t, recorder)
+			require.True(t, response.Success, response.Message)
+
+			var updated model.Token
+			require.NoError(t, model.DB.First(&updated, token.Id).Error)
+			assert.Equal(t, test.expectedRetry, updated.CrossGroupRetry)
+			assert.JSONEq(t, `["vip","default"]`, updated.AutoGroups)
+		})
+	}
+}
+
+func TestUpdateTokenFixedGroupForcesRetryOffAndClearsAutoGroups(t *testing.T) {
+	configureTokenAutoGroupsTest(t, "5", `["default","vip"]`)
+	user := setupTokenAutoGroupsControllerTest(t)
+	token := seedToken(t, model.DB, user.Id, "fixed-clears-retry", "fixed-clears-key-"+common.GetRandomString(8))
+	token.Group = "auto"
+	token.CrossGroupRetry = true
+	require.NoError(t, token.SetAutoGroups([]string{"vip", "default"}))
+	require.NoError(t, model.DB.Save(token).Error)
+
+	request := baseAutoTokenRequest("fixed-clears-retry")
+	request["id"] = token.Id
+	request["status"] = common.TokenStatusEnabled
+	request["name"] = token.Name
+	request["group"] = "default"
+	delete(request, "cross_group_retry")
+
+	ctx, recorder := newTokenAutoGroupsAuthenticatedContext(t, http.MethodPut, "/api/token/", request, user.Id)
+	UpdateToken(ctx)
+	response := decodeAPIResponse(t, recorder)
+	require.True(t, response.Success, response.Message)
+
+	var updated model.Token
+	require.NoError(t, model.DB.First(&updated, token.Id).Error)
+	assert.False(t, updated.CrossGroupRetry)
+	assert.Empty(t, updated.AutoGroups)
+}
+
+func TestUpdateTokenStatusOnlyPreservesRetryAndAutoGroups(t *testing.T) {
+	configureTokenAutoGroupsTest(t, "5", `["default","vip"]`)
+	user := setupTokenAutoGroupsControllerTest(t)
+	token := seedToken(t, model.DB, user.Id, "status-only-retry", "status-only-key-"+common.GetRandomString(8))
+	token.Group = "auto"
+	token.CrossGroupRetry = true
+	require.NoError(t, token.SetAutoGroups([]string{"vip", "default"}))
+	require.NoError(t, model.DB.Save(token).Error)
+
+	request := map[string]any{
+		"id":     token.Id,
+		"status": common.TokenStatusDisabled,
+	}
+	ctx, recorder := newTokenAutoGroupsAuthenticatedContext(t, http.MethodPut, "/api/token/?status_only=true", request, user.Id)
+	UpdateToken(ctx)
+	response := decodeAPIResponse(t, recorder)
+	require.True(t, response.Success, response.Message)
+
+	var updated model.Token
+	require.NoError(t, model.DB.First(&updated, token.Id).Error)
+	assert.Equal(t, common.TokenStatusDisabled, updated.Status)
+	assert.True(t, updated.CrossGroupRetry)
+	assert.JSONEq(t, `["vip","default"]`, updated.AutoGroups)
+}

@@ -51,6 +51,20 @@ func (m *RWMap[K, V]) AddAll(other map[K]V) {
 	}
 }
 
+// ReplaceAll swaps the entire map content in a single lock window. The
+// replacement is copied first so callers cannot mutate internal state, and a
+// failed update path can simply never call this method, leaving the previous
+// map untouched for concurrent readers.
+func (m *RWMap[K, V]) ReplaceAll(other map[K]V) {
+	m.mutex.Lock()
+	defer m.mutex.Unlock()
+	replacement := make(map[K]V, len(other))
+	for k, v := range other {
+		replacement[k] = v
+	}
+	m.data = replacement
+}
+
 func (m *RWMap[K, V]) Clear() {
 	m.mutex.Lock()
 	defer m.mutex.Unlock()

@@ -55,7 +55,7 @@ export async function getUserModels(): Promise<{
   return res.data
 }
 
-export async function getUserGroups(): Promise<{
+export async function getUserRouteGroups(): Promise<{
   success: boolean
   message?: string
   data?: Record<string, { desc: string; ratio: number | string }>

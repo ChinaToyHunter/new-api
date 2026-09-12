@@ -1,8 +1,7 @@
 package ratio_setting
 
 import (
-	"encoding/json"
-	"errors"
+	"fmt"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/setting/config"
@@ -73,7 +72,15 @@ func GroupRatio2JSONString() string {
 }
 
 func UpdateGroupRatioByJSONString(jsonStr string) error {
-	return types.LoadFromJsonString(groupRatioMap, jsonStr)
+	parsed := make(map[string]float64)
+	if err := common.UnmarshalJsonStr(jsonStr, &parsed); err != nil {
+		return err
+	}
+	if err := validateRatioMap(parsed, "group ratio"); err != nil {
+		return err
+	}
+	groupRatioMap.ReplaceAll(parsed)
+	return nil
 }
 
 func GetGroupRatio(name string) float64 {
@@ -102,18 +109,46 @@ func GroupGroupRatio2JSONString() string {
 }
 
 func UpdateGroupGroupRatioByJSONString(jsonStr string) error {
-	return types.LoadFromJsonString(groupGroupRatioMap, jsonStr)
-}
-
-func CheckGroupRatio(jsonStr string) error {
-	checkGroupRatio := make(map[string]float64)
-	err := json.Unmarshal([]byte(jsonStr), &checkGroupRatio)
+	parsed, err := parseGroupGroupRatio(jsonStr)
 	if err != nil {
 		return err
 	}
-	for name, ratio := range checkGroupRatio {
+	groupGroupRatioMap.ReplaceAll(parsed)
+	return nil
+}
+
+func CheckGroupGroupRatio(jsonStr string) error {
+	_, err := parseGroupGroupRatio(jsonStr)
+	return err
+}
+
+func parseGroupGroupRatio(jsonStr string) (map[string]map[string]float64, error) {
+	parsed := make(map[string]map[string]float64)
+	if err := common.UnmarshalJsonStr(jsonStr, &parsed); err != nil {
+		return nil, err
+	}
+	for accountGroup, ratios := range parsed {
+		for routeGroup, ratio := range ratios {
+			if ratio < 0 {
+				return nil, fmt.Errorf("group-group ratio must be not less than 0: %s/%s", accountGroup, routeGroup)
+			}
+		}
+	}
+	return parsed, nil
+}
+
+func CheckGroupRatio(jsonStr string) error {
+	parsed := make(map[string]float64)
+	if err := common.UnmarshalJsonStr(jsonStr, &parsed); err != nil {
+		return err
+	}
+	return validateRatioMap(parsed, "group ratio")
+}
+
+func validateRatioMap(ratios map[string]float64, label string) error {
+	for name, ratio := range ratios {
 		if ratio < 0 {
-			return errors.New("group ratio must be not less than 0: " + name)
+			return fmt.Errorf("%s must be not less than 0: %s", label, name)
 		}
 	}
 	return nil

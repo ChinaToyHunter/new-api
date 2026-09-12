@@ -4,6 +4,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/setting"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 
 	"github.com/gin-gonic/gin"
@@ -38,41 +39,46 @@ func GetPricing(c *gin.Context) {
 	userId, exists := c.Get("id")
 	usableGroup := map[string]string{}
 	groupRatio := map[string]float64{}
-	for s, f := range ratio_setting.GetGroupRatioCopy() {
-		groupRatio[s] = f
+	for groupName, ratio := range ratio_setting.GetGroupRatioCopy() {
+		groupRatio[groupName] = ratio
 	}
-	var group string
+	var accountGroup string
 	if exists {
 		user, err := model.GetUserCache(userId.(int))
 		if err == nil {
-			group = user.Group
-			for g := range groupRatio {
-				ratio, ok := ratio_setting.GetGroupGroupRatio(group, g)
+			accountGroup = user.Group
+			for routeGroup := range groupRatio {
+				ratio, ok := ratio_setting.GetGroupGroupRatio(accountGroup, routeGroup)
 				if ok {
-					groupRatio[g] = ratio
+					groupRatio[routeGroup] = ratio
 				}
 			}
 		}
 	}
 
-	usableGroup = service.GetUserUsableGroups(group)
+	usableGroup = service.GetUserUsableGroups(accountGroup)
 	pricing = filterPricingByUsableGroups(pricing, usableGroup)
-	// check groupRatio contains usableGroup
-	for group := range ratio_setting.GetGroupRatioCopy() {
-		if _, ok := usableGroup[group]; !ok {
-			delete(groupRatio, group)
+	for routeGroup := range ratio_setting.GetGroupRatioCopy() {
+		if _, ok := usableGroup[routeGroup]; !ok {
+			delete(groupRatio, routeGroup)
 		}
 	}
+	autoRouteGroups := service.GetUserAutoGroup(accountGroup)
 
 	c.JSON(200, gin.H{
-		"success":            true,
-		"data":               pricing,
-		"vendors":            model.GetVendors(),
-		"group_ratio":        groupRatio,
-		"usable_group":       usableGroup,
-		"supported_endpoint": model.GetSupportedEndpointMap(),
-		"auto_groups":        service.GetUserAutoGroup(group),
-		"pricing_version":    "a42d372ccf0b5dd13ecf71203521f9d2",
+		"success":                true,
+		"data":                   pricing,
+		"vendors":                model.GetVendors(),
+		"group_ratio":            groupRatio,
+		"usable_group":           usableGroup,
+		"supported_endpoint":     model.GetSupportedEndpointMap(),
+		"auto_groups":            autoRouteGroups,
+		"pricing_version":        "a42d372ccf0b5dd13ecf71203521f9d2",
+		"account_group":          accountGroup,
+		"route_group_ratio":      groupRatio,
+		"usable_route_groups":    usableGroup,
+		"auto_route_groups":      autoRouteGroups,
+		"group_contract_version": setting.GroupContractVersion,
 	})
 }
 

@@ -7,12 +7,17 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/setting"
+	"github.com/QuantumNous/new-api/setting/ratio_setting"
+	"github.com/QuantumNous/new-api/types"
 	"github.com/gin-gonic/gin"
 	"github.com/glebarez/sqlite"
 	"github.com/golang-jwt/jwt/v5"
@@ -82,6 +87,120 @@ func createMiddlewarePATUser(t *testing.T, username, token string) *model.User {
 	}
 	require.NoError(t, model.DB.Create(user).Error)
 	return user
+}
+
+func TestTokenAuthAutoGroupUsesIndependentAccountAndRouteGroups(t *testing.T) {
+	previousDB := model.DB
+	previousLogDB := model.LOG_DB
+	previousMainDBType := common.MainDatabaseType()
+	previousLogDBType := common.LogDatabaseType()
+	previousRedis := common.RedisEnabled
+	previousMemoryCache := common.MemoryCacheEnabled
+	previousGroups := setting.UserUsableGroups2JSONString()
+	previousAutoGroups := setting.AutoGroups2JsonString()
+	previousMaxAutoGroups := setting.GetMaxTokenAutoGroups()
+	previousRatios := ratio_setting.GroupRatio2JSONString()
+	previousGroupGroupRatios := ratio_setting.GroupGroupRatio2JSONString()
+	previousSpecialGroups := ratio_setting.GetGroupRatioSetting().GroupSpecialUsableGroup.MarshalJSONString()
+
+	dsn := fmt.Sprintf("file:%s?mode=memory&cache=shared", strings.ReplaceAll(t.Name(), "/", "_"))
+	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&model.User{}, &model.Token{}))
+	model.DB = db
+	model.LOG_DB = db
+	common.SetDatabaseTypes(common.DatabaseTypeSQLite, common.DatabaseTypeSQLite)
+	common.RedisEnabled = false
+	common.MemoryCacheEnabled = false
+	modelTestInitColumnsForMiddleware()
+	require.NoError(t, setting.UpdateUserUsableGroupsByJSONString(`{"default":"Default route","vip":"VIP route"}`))
+	require.NoError(t, setting.UpdateAutoGroupsByJsonString(`[]`))
+	require.NoError(t, setting.UpdateMaxTokenAutoGroups("5"))
+	require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(`{"default":1,"vip":2}`))
+	require.NoError(t, ratio_setting.UpdateGroupGroupRatioByJSONString(`{"account-default":{"vip":1.25}}`))
+	require.NoError(t, types.LoadFromJsonString(
+		ratio_setting.GetGroupRatioSetting().GroupSpecialUsableGroup,
+		`{}`,
+	))
+	t.Cleanup(func() {
+		model.DB = previousDB
+		model.LOG_DB = previousLogDB
+		common.SetDatabaseTypes(previousMainDBType, previousLogDBType)
+		common.RedisEnabled = previousRedis
+		common.MemoryCacheEnabled = previousMemoryCache
+		require.NoError(t, setting.UpdateUserUsableGroupsByJSONString(previousGroups))
+		require.NoError(t, setting.UpdateAutoGroupsByJsonString(previousAutoGroups))
+		require.NoError(t, setting.UpdateMaxTokenAutoGroups(fmt.Sprintf("%d", previousMaxAutoGroups)))
+		require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(previousRatios))
+		require.NoError(t, ratio_setting.UpdateGroupGroupRatioByJSONString(previousGroupGroupRatios))
+		require.NoError(t, types.LoadFromJsonString(
+			ratio_setting.GetGroupRatioSetting().GroupSpecialUsableGroup,
+			previousSpecialGroups,
+		))
+		sqlDB, closeErr := db.DB()
+		if closeErr == nil {
+			_ = sqlDB.Close()
+		}
+	})
+
+	user := &model.User{
+		Username: "token-auth-auto-user",
+		Password: "password-placeholder",
+		Role:     common.RoleCommonUser,
+		Status:   common.UserStatusEnabled,
+		Group:    "account-default",
+	}
+	require.NoError(t, db.Create(user).Error)
+	token := &model.Token{
+		UserId:          user.Id,
+		Key:             "tokenauthautokey",
+		Status:          common.TokenStatusEnabled,
+		Name:            "auto-token",
+		ExpiredTime:     -1,
+		UnlimitedQuota:  true,
+		Group:           "auto",
+		CrossGroupRetry: true,
+	}
+	require.NoError(t, token.SetAutoGroups([]string{"vip", "default"}))
+	require.NoError(t, db.Create(token).Error)
+
+	router := gin.New()
+	router.GET("/protected", TokenAuth(), func(c *gin.Context) {
+		autoGroups, _ := common.GetContextKey(c, constant.ContextKeyTokenAutoGroups)
+		c.JSON(http.StatusOK, gin.H{
+			"account_group":     c.GetString(string(constant.ContextKeyUserGroup)),
+			"using_group":       c.GetString(string(constant.ContextKeyUsingGroup)),
+			"token_group":       c.GetString(string(constant.ContextKeyTokenGroup)),
+			"cross_group_retry": c.GetBool(string(constant.ContextKeyTokenCrossGroupRetry)),
+			"token_auto_groups": autoGroups,
+		})
+	})
+	request := httptest.NewRequest(http.MethodGet, "/protected", nil)
+	request.Header.Set("Authorization", "Bearer sk-"+token.Key)
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	var body struct {
+		AccountGroup    string   `json:"account_group"`
+		UsingGroup      string   `json:"using_group"`
+		TokenGroup      string   `json:"token_group"`
+		CrossGroupRetry bool     `json:"cross_group_retry"`
+		TokenAutoGroups []string `json:"token_auto_groups"`
+	}
+	require.NoError(t, common.Unmarshal(response.Body.Bytes(), &body))
+	assert.Equal(t, "account-default", body.AccountGroup)
+	assert.Equal(t, "auto", body.UsingGroup)
+	assert.Equal(t, "auto", body.TokenGroup)
+	assert.True(t, body.CrossGroupRetry)
+	assert.Equal(t, []string{"vip", "default"}, body.TokenAutoGroups)
+}
+
+func modelTestInitColumnsForMiddleware() {
+	// TokenAuth queries the reserved group/key columns. InitDB normally initializes
+	// these package variables; the isolated middleware fixture must do the same.
+	// The model package exposes no test-only initializer, so a harmless SQLite
+	// query through the public token path is enough after the global type setup.
 }
 
 func TestUserAuthAllowsOpaqueDottedPAT(t *testing.T) {

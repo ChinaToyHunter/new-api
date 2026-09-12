@@ -136,6 +136,60 @@ type OptionUpdateRequest struct {
 	Value any    `json:"value"`
 }
 
+type OptionsUpdateRequest struct {
+	Options map[string]any `json:"options"`
+}
+
+func stringifyOptionValue(value any) string {
+	switch typedValue := value.(type) {
+	case bool:
+		return common.Interface2String(typedValue)
+	case float64:
+		return common.Interface2String(typedValue)
+	case int:
+		return common.Interface2String(typedValue)
+	default:
+		return fmt.Sprintf("%v", value)
+	}
+}
+
+func UpdateOptions(c *gin.Context) {
+	var request OptionsUpdateRequest
+	if err := common.DecodeJson(c.Request.Body, &request); err != nil || len(request.Options) == 0 {
+		common.ApiErrorMsg(c, "无效的参数")
+		return
+	}
+	values := make(map[string]string, len(request.Options))
+	for key, value := range request.Options {
+		if key != setting.AccountGroupsOptionKey && key != "DefaultUserGroup" {
+			common.ApiErrorMsg(c, "批量设置接口仅支持 AccountGroups 和 DefaultUserGroup")
+			return
+		}
+		values[key] = stringifyOptionValue(value)
+	}
+	if _, ok := values[setting.AccountGroupsOptionKey]; !ok {
+		common.ApiErrorMsg(c, "批量设置必须同时包含 AccountGroups 和 DefaultUserGroup")
+		return
+	}
+	if _, ok := values["DefaultUserGroup"]; !ok {
+		common.ApiErrorMsg(c, "批量设置必须同时包含 AccountGroups 和 DefaultUserGroup")
+		return
+	}
+	if err := model.UpdateOptionsBulk(values); err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	recordManageAudit(c, "option.update_bulk", map[string]interface{}{
+		"keys": keys,
+	})
+	common.ApiSuccess(c, nil)
+}
+
 func UpdateOption(c *gin.Context) {
 	var option OptionUpdateRequest
 	err := common.DecodeJson(c.Request.Body, &option)
@@ -260,6 +314,24 @@ func UpdateOption(c *gin.Context) {
 		}
 	case "GroupRatio":
 		err = ratio_setting.CheckGroupRatio(option.Value.(string))
+		if err != nil {
+			c.JSON(http.StatusOK, gin.H{
+				"success": false,
+				"message": err.Error(),
+			})
+			return
+		}
+	case "GroupGroupRatio":
+		err = ratio_setting.CheckGroupGroupRatio(option.Value.(string))
+		if err != nil {
+			c.JSON(http.StatusOK, gin.H{
+				"success": false,
+				"message": err.Error(),
+			})
+			return
+		}
+	case "TopupGroupRatio":
+		err = common.CheckTopupGroupRatio(option.Value.(string))
 		if err != nil {
 			c.JSON(http.StatusOK, gin.H{
 				"success": false,

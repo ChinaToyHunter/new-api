@@ -30,7 +30,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { resetModelRatios } from '../api'
 import { SettingsPageTitleStatusPortal } from '../components/settings-page-context'
 import { SettingsSection } from '../components/settings-section'
-import { useUpdateOption } from '../hooks/use-update-option'
+import { useUpdateOption, useUpdateOptions } from '../hooks/use-update-option'
 import { positiveIntegerSchema } from '../utils/numeric-field'
 import { GroupRatioForm } from './group-ratio-form'
 import { ModelRatioForm } from './model-ratio-form'
@@ -104,6 +104,45 @@ function createJsonStringField(
   })
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+function isAccountGroupCatalog(
+  value: unknown
+): value is Record<string, string> {
+  return (
+    isRecord(value) &&
+    Object.values(value).every((description) => typeof description === 'string')
+  )
+}
+
+function isNonNegativeRatioMap(value: unknown): boolean {
+  return (
+    isRecord(value) &&
+    Object.values(value).every(
+      (ratio) =>
+        typeof ratio === 'number' && Number.isFinite(ratio) && ratio >= 0
+    )
+  )
+}
+
+function isNonNegativeNestedRatioMap(value: unknown): boolean {
+  return (
+    isRecord(value) &&
+    Object.values(value).every((ratios) => isNonNegativeRatioMap(ratios))
+  )
+}
+
+function parseAccountGroupCatalog(value: string) {
+  try {
+    const parsed: unknown = JSON.parse(value)
+    return isAccountGroupCatalog(parsed) ? parsed : null
+  } catch {
+    return null
+  }
+}
+
 const createModelSchema = (t: Translate) =>
   z.object({
     ModelPrice: createJsonStringField(t),
@@ -119,22 +158,49 @@ const createModelSchema = (t: Translate) =>
     BillingExpr: createJsonStringField(t),
   })
 
-const createGroupSchema = (t: Translate) =>
-  z.object({
-    GroupRatio: createJsonStringField(t),
-    TopupGroupRatio: createJsonStringField(t),
-    UserUsableGroups: createJsonStringField(t),
-    GroupGroupRatio: createJsonStringField(t),
-    AutoGroups: createJsonStringField(t, {
-      predicate: (parsed) =>
-        Array.isArray(parsed) &&
-        parsed.every((item) => typeof item === 'string'),
-      predicateMessage: 'Expected a JSON array of group identifiers',
-    }),
-    MaxTokenAutoGroups: positiveIntegerSchema(t('Enter a positive integer')),
-    DefaultUseAutoGroup: z.boolean(),
-    GroupSpecialUsableGroup: createJsonStringField(t),
-  })
+// Exported for direct validation regression tests (see
+// __tests__/group-ratio-validation.test.ts).
+// eslint-disable-next-line react-refresh/only-export-components
+export const createGroupSchema = (t: Translate) =>
+  z
+    .object({
+      AccountGroups: createJsonStringField(t, {
+        predicate: isAccountGroupCatalog,
+        predicateMessage:
+          'Expected a JSON object of account group descriptions',
+      }),
+      DefaultUserGroup: z.string().trim().min(1, t('Value is required')),
+      GroupRatio: createJsonStringField(t, {
+        predicate: isNonNegativeRatioMap,
+      }),
+      TopupGroupRatio: createJsonStringField(t, {
+        predicate: isNonNegativeRatioMap,
+      }),
+      UserUsableGroups: createJsonStringField(t),
+      GroupGroupRatio: createJsonStringField(t, {
+        predicate: isNonNegativeNestedRatioMap,
+      }),
+      AutoGroups: createJsonStringField(t, {
+        predicate: (parsed) =>
+          Array.isArray(parsed) &&
+          parsed.every((item) => typeof item === 'string'),
+        predicateMessage: 'Expected a JSON array of group identifiers',
+      }),
+      MaxTokenAutoGroups: positiveIntegerSchema(t('Enter a positive integer')),
+      DefaultUseAutoGroup: z.boolean(),
+      GroupSpecialUsableGroup: createJsonStringField(t),
+    })
+    .superRefine((values, ctx) => {
+      const accountGroups = parseAccountGroupCatalog(values.AccountGroups)
+      if (!accountGroups) return
+      if (!Object.hasOwn(accountGroups, values.DefaultUserGroup)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['DefaultUserGroup'],
+          message: t('Default account group must exist in AccountGroups'),
+        })
+      }
+    })
 
 type ModelFormValues = z.infer<ReturnType<typeof createModelSchema>>
 type GroupFormValues = z.infer<ReturnType<typeof createGroupSchema>>
@@ -162,6 +228,7 @@ export function RatioSettingsCard({
 }: RatioSettingsCardProps) {
   const { t } = useTranslation()
   const updateOption = useUpdateOption()
+  const updateOptions = useUpdateOptions()
   const queryClient = useQueryClient()
   const [confirmOpen, setConfirmOpen] = useState(false)
 
@@ -201,6 +268,8 @@ export function RatioSettingsCard({
   )
 
   const groupNormalizedDefaults = useRef({
+    AccountGroups: normalizeJsonString(groupDefaults.AccountGroups),
+    DefaultUserGroup: groupDefaults.DefaultUserGroup,
     GroupRatio: normalizeJsonString(groupDefaults.GroupRatio),
     TopupGroupRatio: normalizeJsonString(groupDefaults.TopupGroupRatio),
     UserUsableGroups: normalizeJsonString(groupDefaults.UserUsableGroups),
@@ -240,6 +309,7 @@ export function RatioSettingsCard({
     mode: 'onChange',
     defaultValues: {
       ...groupDefaults,
+      AccountGroups: formatJsonForTextarea(groupDefaults.AccountGroups),
       GroupRatio: formatJsonForTextarea(groupDefaults.GroupRatio),
       TopupGroupRatio: formatJsonForTextarea(groupDefaults.TopupGroupRatio),
       UserUsableGroups: formatJsonForTextarea(groupDefaults.UserUsableGroups),
@@ -288,6 +358,8 @@ export function RatioSettingsCard({
 
   useEffect(() => {
     groupNormalizedDefaults.current = {
+      AccountGroups: normalizeJsonString(groupDefaults.AccountGroups),
+      DefaultUserGroup: groupDefaults.DefaultUserGroup,
       GroupRatio: normalizeJsonString(groupDefaults.GroupRatio),
       TopupGroupRatio: normalizeJsonString(groupDefaults.TopupGroupRatio),
       UserUsableGroups: normalizeJsonString(groupDefaults.UserUsableGroups),
@@ -302,6 +374,7 @@ export function RatioSettingsCard({
 
     groupForm.reset({
       ...groupDefaults,
+      AccountGroups: formatJsonForTextarea(groupDefaults.AccountGroups),
       GroupRatio: formatJsonForTextarea(groupDefaults.GroupRatio),
       TopupGroupRatio: formatJsonForTextarea(groupDefaults.TopupGroupRatio),
       UserUsableGroups: formatJsonForTextarea(groupDefaults.UserUsableGroups),
@@ -359,6 +432,8 @@ export function RatioSettingsCard({
   const saveGroupRatios = useCallback(
     async (values: GroupFormValues) => {
       const normalized = {
+        AccountGroups: normalizeJsonString(values.AccountGroups),
+        DefaultUserGroup: values.DefaultUserGroup.trim(),
         GroupRatio: normalizeJsonString(values.GroupRatio),
         TopupGroupRatio: normalizeJsonString(values.TopupGroupRatio),
         UserUsableGroups: normalizeJsonString(values.UserUsableGroups),
@@ -383,14 +458,32 @@ export function RatioSettingsCard({
         (key) => normalized[key] !== groupNormalizedDefaults.current[key]
       )
 
+      const accountPairChanged =
+        updates.includes('AccountGroups') ||
+        updates.includes('DefaultUserGroup')
+
+      if (accountPairChanged) {
+        await updateOptions.mutateAsync({
+          AccountGroups: normalized.AccountGroups,
+          DefaultUserGroup: normalized.DefaultUserGroup,
+        })
+      }
+
+      const skippedKeys = new Set<string>()
+      if (accountPairChanged) {
+        skippedKeys.add('AccountGroups')
+        skippedKeys.add('DefaultUserGroup')
+      }
+
       for (const key of updates) {
+        if (skippedKeys.has(key)) continue
         const apiKey = apiKeyMap[key] || key
         await updateOption.mutateAsync({ key: apiKey, value: normalized[key] })
       }
 
       groupNormalizedDefaults.current = normalized
     },
-    [updateOption]
+    [updateOption, updateOptions]
   )
 
   const handleResetRatios = useCallback(() => {

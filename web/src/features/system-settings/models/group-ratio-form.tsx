@@ -17,7 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { Code2, Eye, HelpCircle } from 'lucide-react'
-import { memo, useCallback, useMemo, useState, type ReactNode } from 'react'
+import { memo, useCallback, useState, type ReactNode } from 'react'
 import type { UseFormReturn } from 'react-hook-form'
 import { useTranslation } from 'react-i18next'
 
@@ -59,12 +59,12 @@ import {
   SettingsSwitchItem,
 } from '../components/settings-form-layout'
 import { SettingsPageActionsPortal } from '../components/settings-page-context'
-import { safeJsonParse } from '../utils/json-parser'
 import { safeNumberFieldProps } from '../utils/numeric-field'
 import { GroupRatioVisualEditor } from './group-ratio-visual-editor'
-import { GroupSpecialUsableRulesEditor } from './group-special-usable-editor'
 
 type GroupFormValues = {
+  AccountGroups: string
+  DefaultUserGroup: string
   GroupRatio: string
   TopupGroupRatio: string
   UserUsableGroups: string
@@ -104,31 +104,6 @@ export const GroupRatioForm = memo(function GroupRatioForm({
     setEditMode((prev) => (prev === 'visual' ? 'json' : 'visual'))
   }, [])
 
-  const watchedGroupRatio = form.watch('GroupRatio')
-  const watchedUserUsableGroups = form.watch('UserUsableGroups')
-  const watchedTopupGroupRatio = form.watch('TopupGroupRatio')
-  const groupNames = useMemo(() => {
-    const ratioMap = safeJsonParse<Record<string, number>>(watchedGroupRatio, {
-      fallback: {},
-      silent: true,
-    })
-    const usableMap = safeJsonParse<Record<string, string>>(
-      watchedUserUsableGroups,
-      { fallback: {}, silent: true }
-    )
-    const topupMap = safeJsonParse<Record<string, number>>(
-      watchedTopupGroupRatio,
-      { fallback: {}, silent: true }
-    )
-    return [
-      ...new Set([
-        ...Object.keys(ratioMap),
-        ...Object.keys(usableMap),
-        ...Object.keys(topupMap),
-      ]),
-    ]
-  }, [watchedGroupRatio, watchedUserUsableGroups, watchedTopupGroupRatio])
-
   return (
     <div className='space-y-6'>
       <div className='flex flex-wrap justify-end gap-2'>
@@ -167,6 +142,8 @@ export const GroupRatioForm = memo(function GroupRatioForm({
         {editMode === 'visual' ? (
           <div className='space-y-6'>
             <GroupRatioVisualEditor
+              accountGroups={form.watch('AccountGroups')}
+              defaultUserGroup={form.watch('DefaultUserGroup')}
               groupRatio={form.watch('GroupRatio')}
               topupGroupRatio={form.watch('TopupGroupRatio')}
               userUsableGroups={form.watch('UserUsableGroups')}
@@ -201,44 +178,58 @@ export const GroupRatioForm = memo(function GroupRatioForm({
                 />
               }
               groupSpecialUsableGroup={form.watch('GroupSpecialUsableGroup')}
+              defaultUseAutoGroup={form.watch('DefaultUseAutoGroup')}
               onChange={(field, value) =>
                 handleFieldChange(field as keyof GroupFormValues, value)
               }
             />
-
-            <GroupSpecialUsableRulesEditor
-              value={form.watch('GroupSpecialUsableGroup')}
-              groupOptions={groupNames}
-              onChange={(value) =>
-                handleFieldChange('GroupSpecialUsableGroup', value)
-              }
+          </div>
+        ) : (
+          <SettingsForm onSubmit={form.handleSubmit(onSave)}>
+            <FormField
+              control={form.control}
+              name='AccountGroups'
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>{t('Account groups')}</FormLabel>
+                  <FormControl>
+                    <JsonCodeEditor
+                      value={field.value}
+                      onChange={field.onChange}
+                      name={field.name}
+                      onBlur={field.onBlur}
+                      textareaRef={field.ref}
+                    />
+                  </FormControl>
+                  <FormDescription>
+                    {t(
+                      'JSON map of account group ID to account description. This catalog is independent from route groups.'
+                    )}
+                  </FormDescription>
+                  <FormMessage />
+                </FormItem>
+              )}
             />
 
             <FormField
               control={form.control}
-              name='DefaultUseAutoGroup'
+              name='DefaultUserGroup'
               render={({ field }) => (
-                <SettingsSwitchItem>
-                  <SettingsSwitchContent>
-                    <FormLabel>{t('Default to auto groups')}</FormLabel>
-                    <FormDescription>
-                      {t(
-                        'When enabled, newly created tokens start in the first auto group.'
-                      )}
-                    </FormDescription>
-                  </SettingsSwitchContent>
+                <FormItem>
+                  <FormLabel>{t('Default account group')}</FormLabel>
                   <FormControl>
-                    <Switch
-                      checked={field.value}
-                      onCheckedChange={field.onChange}
-                    />
+                    <Input {...field} />
                   </FormControl>
-                </SettingsSwitchItem>
+                  <FormDescription>
+                    {t(
+                      'Default account group assigned when no other account group is set.'
+                    )}
+                  </FormDescription>
+                  <FormMessage />
+                </FormItem>
               )}
             />
-          </div>
-        ) : (
-          <SettingsForm onSubmit={form.handleSubmit(onSave)}>
+
             <FormField
               control={form.control}
               name='GroupRatio'
@@ -256,7 +247,7 @@ export const GroupRatioForm = memo(function GroupRatioForm({
                   </FormControl>
                   <FormDescription>
                     {t(
-                      'JSON map of group → ratio applied when the user selects the group explicitly.'
+                      'JSON map of route group identifiers to base ratios used for explicit route selection.'
                     )}
                   </FormDescription>
                   <FormMessage />
@@ -269,7 +260,7 @@ export const GroupRatioForm = memo(function GroupRatioForm({
               name='TopupGroupRatio'
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>{t('Top-up group ratios')}</FormLabel>
+                  <FormLabel>{t('Top-up account-group ratios')}</FormLabel>
                   <FormControl>
                     <JsonCodeEditor
                       value={field.value}
@@ -282,7 +273,7 @@ export const GroupRatioForm = memo(function GroupRatioForm({
                   </FormControl>
                   <FormDescription>
                     {t(
-                      'Optional multiplier per user group used when calculating recharge pricing. Provide a JSON object such as'
+                      'Optional multiplier per account group used when calculating recharge pricing. Provide a JSON object such as'
                     )}
                     {` { "default": 1, "vip": 1.2 }`}.
                   </FormDescription>
@@ -296,7 +287,7 @@ export const GroupRatioForm = memo(function GroupRatioForm({
               name='UserUsableGroups'
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>{t('Selectable groups')}</FormLabel>
+                  <FormLabel>{t('Selectable route groups')}</FormLabel>
                   <FormControl>
                     <JsonCodeEditor
                       value={field.value}
@@ -309,7 +300,7 @@ export const GroupRatioForm = memo(function GroupRatioForm({
                   </FormControl>
                   <FormDescription>
                     {t(
-                      'JSON map of group → description exposed when users create API keys.'
+                      'JSON map of route group identifiers to descriptions shown when users create API keys.'
                     )}
                   </FormDescription>
                   <FormMessage />
@@ -322,7 +313,7 @@ export const GroupRatioForm = memo(function GroupRatioForm({
               name='GroupGroupRatio'
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>{t('Inter-group overrides')}</FormLabel>
+                  <FormLabel>{t('Account-to-route ratio overrides')}</FormLabel>
                   <FormControl>
                     <JsonCodeEditor
                       value={field.value}
@@ -333,8 +324,10 @@ export const GroupRatioForm = memo(function GroupRatioForm({
                     />
                   </FormControl>
                   <FormDescription>
-                    {t('Nested JSON: source group →')}{' '}
-                    {`{ targetGroup: ratio }`}{' '}
+                    {t(
+                      'Nested JSON maps an account group to route-group ratio overrides.'
+                    )}{' '}
+                    {`{ routeGroup: ratio }`}{' '}
                     {t(
                       'to override billing when a user in one group uses a token of another group.'
                     )}
@@ -362,7 +355,7 @@ export const GroupRatioForm = memo(function GroupRatioForm({
                   </FormControl>
                   <FormDescription>
                     {t(
-                      'JSON array of group identifiers. When enabled below, new tokens rotate through this list.'
+                      'JSON array of route group identifiers. When enabled below, new tokens rotate through this list.'
                     )}
                   </FormDescription>
                   <FormMessage />
@@ -400,7 +393,9 @@ export const GroupRatioForm = memo(function GroupRatioForm({
               name='GroupSpecialUsableGroup'
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>{t('Special usable group rules')}</FormLabel>
+                  <FormLabel>
+                    {t('Account-to-route visibility rules')}
+                  </FormLabel>
                   <FormControl>
                     <JsonCodeEditor
                       value={field.value}
@@ -412,7 +407,7 @@ export const GroupRatioForm = memo(function GroupRatioForm({
                   </FormControl>
                   <FormDescription>
                     {t(
-                      'Nested JSON defining per-group rules for adding (+:), removing (-:), or appending usable groups.'
+                      'Nested JSON mapping account groups to route-group visibility rules. Prefix route keys with +: to add or -: to hide them.'
                     )}
                   </FormDescription>
                   <FormMessage />
@@ -429,7 +424,7 @@ export const GroupRatioForm = memo(function GroupRatioForm({
                     <FormLabel>{t('Default to auto groups')}</FormLabel>
                     <FormDescription>
                       {t(
-                        'When enabled, newly created tokens start in the first auto group.'
+                        'Legacy compatibility field preserved for existing installations; use the account default and AutoGroups controls above.'
                       )}
                     </FormDescription>
                   </SettingsSwitchContent>

@@ -38,6 +38,41 @@ func newRequestAutoGroupsContext() *gin.Context {
 	return ctx
 }
 
+func TestGetUserUsableGroupsDoesNotTreatAccountGroupAsRouteGroup(t *testing.T) {
+	originalAccountGroups := setting.AccountGroups2JSONString()
+	originalDefault := setting.GetDefaultUserGroup()
+	originalUsableGroups := setting.UserUsableGroups2JSONString()
+	originalRatios := ratio_setting.GroupRatio2JSONString()
+	require.NoError(t, setting.UpdateAccountGroupSettingsByJSONString(`{"account-only":"Account only"}`, "account-only"))
+	require.NoError(t, setting.UpdateUserUsableGroupsByJSONString(`{"default":"Default route"}`))
+	require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(`{"default":1}`))
+	t.Cleanup(func() {
+		require.NoError(t, setting.UpdateAccountGroupSettingsByJSONString(originalAccountGroups, originalDefault))
+		require.NoError(t, setting.UpdateUserUsableGroupsByJSONString(originalUsableGroups))
+		require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(originalRatios))
+	})
+
+	groups := GetUserUsableGroups("account-only")
+
+	assert.Equal(t, map[string]string{"default": "Default route"}, groups)
+	assert.NotContains(t, groups, "account-only")
+}
+
+func TestGetUserUsableGroupsKeepsSameNameLegacyRouteWhenConfigured(t *testing.T) {
+	originalUsableGroups := setting.UserUsableGroups2JSONString()
+	originalRatios := ratio_setting.GroupRatio2JSONString()
+	require.NoError(t, setting.UpdateUserUsableGroupsByJSONString(`{"default":"Default route"}`))
+	require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(`{"default":1,"legacy-shared":2}`))
+	t.Cleanup(func() {
+		require.NoError(t, setting.UpdateUserUsableGroupsByJSONString(originalUsableGroups))
+		require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(originalRatios))
+	})
+
+	groups := GetUserUsableGroups("legacy-shared")
+
+	assert.Equal(t, "用户分组", groups["legacy-shared"])
+}
+
 func TestGetRequestAutoGroupsInheritedListIsNotLimited(t *testing.T) {
 	configureRequestAutoGroupsTest(t)
 	ctx := newRequestAutoGroupsContext()

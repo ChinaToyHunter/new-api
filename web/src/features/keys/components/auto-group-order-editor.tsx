@@ -164,7 +164,9 @@ export function AutoGroupOrderEditor(props: AutoGroupOrderEditorProps) {
     () =>
       props.options.filter(
         (option) =>
-          option.value !== 'auto' && !props.value.includes(option.value)
+          option.value !== 'auto' &&
+          option.value !== '' &&
+          !props.value.includes(option.value)
       ),
     [props.options, props.value]
   )

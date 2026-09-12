@@ -48,9 +48,7 @@ export function ApiKeyGroupCell(props: ApiKeyGroupCellProps) {
     return (
       <TruncatedCell
         className='-ml-1.5'
-        tooltipContent={t(
-          'This token inherits the owner account group (legacy)'
-        )}
+        tooltipContent={t('Inherit account group')}
         tooltipClassName='break-all'
       >
         <GroupBadge label={t('Inherit account group')} />

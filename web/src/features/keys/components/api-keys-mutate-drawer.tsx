@@ -62,7 +62,7 @@ import {
 } from '@/components/ui/sheet'
 import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
-import { getUserModels, getUserGroups } from '@/lib/api'
+import { getUserModels, getUserRouteGroups } from '@/lib/api'
 import { getCurrencyDisplay, getCurrencyLabel } from '@/lib/currency'
 import { cn } from '@/lib/utils'
 
@@ -72,7 +72,11 @@ import {
   getApiKey,
   getTokenAutoGroups,
 } from '../api'
-import { ERROR_MESSAGES, SUCCESS_MESSAGES } from '../constants'
+import {
+  ERROR_MESSAGES,
+  LEGACY_INHERIT_GROUP,
+  SUCCESS_MESSAGES,
+} from '../constants'
 import {
   getApiKeyFormSchema,
   type ApiKeyFormValues,
@@ -80,7 +84,7 @@ import {
   transformFormDataToPayload,
   transformApiKeyToFormDefaults,
 } from '../lib'
-import type { ApiKey } from '../types'
+import type { ApiKey, ApiKeyUpdateData } from '../types'
 import {
   ApiKeyGroupCombobox,
   type ApiKeyGroupOption,
@@ -123,8 +127,8 @@ export function ApiKeysMutateDrawer({
     isFetched: groupsFetched,
     isFetching: groupsFetching,
   } = useQuery({
-    queryKey: ['user-groups'],
-    queryFn: getUserGroups,
+    queryKey: ['user-route-groups'],
+    queryFn: getUserRouteGroups,
     enabled: open,
     staleTime: 0,
   })
@@ -152,18 +156,31 @@ export function ApiKeysMutateDrawer({
   })
 
   const models = modelsData?.data || []
-  const groups = useMemo<ApiKeyGroupOption[]>(
-    () =>
-      Object.entries(groupsData?.data || {}).map(([key, info]) => ({
-        value: key,
-        label: key,
-        desc: info.desc || key,
-        ratio: info.ratio,
-      })),
-    [groupsData]
-  )
+  const storedGroup: string = apiKeyData?.data?.group ?? currentRow?.group ?? ''
+  const groups = useMemo<ApiKeyGroupOption[]>(() => {
+    const routeGroups: ApiKeyGroupOption[] = Object.entries(
+      groupsData?.data || {}
+    ).map(([key, info]) => ({
+      value: key,
+      label: key,
+      desc: info.desc || key,
+      ratio: info.ratio,
+    }))
+    if (!routeGroups.some((group) => group.value === storedGroup)) {
+      routeGroups.push({
+        value: storedGroup,
+        label: storedGroup === '' ? t('Inherit account group') : storedGroup,
+        desc: storedGroup === '' ? t('Inherit account group') : t('Unknown'),
+        isLegacy: storedGroup === '',
+      })
+    }
+    return routeGroups
+  }, [groupsData, storedGroup, t])
   const availableAutoGroupNames = useMemo(
-    () => groups.filter((group) => group.value !== 'auto').map((g) => g.value),
+    () =>
+      groups
+        .filter((group) => group.value !== 'auto' && group.value !== '')
+        .map((g) => g.value),
     [groups]
   )
   const globalAutoGroups = useMemo(() => {
@@ -249,29 +266,8 @@ export function ApiKeysMutateDrawer({
   const isFormInitialized = initializedTarget === formTarget
   const selectedGroup = form.watch('group')
 
-  // Correct group after groups load: if the form value is not in available
-  // groups, fall back to the deployment default group first instead of
-  // hardcoding a 'default' group that may not exist on every deployment.
-  useEffect(() => {
-    if (groups.length === 0) return
-    const currentGroup = selectedGroup
-    if (
-      currentGroup &&
-      currentGroup !== 'auto' &&
-      !groups.some((g) => g.value === currentGroup)
-    ) {
-      const fallback =
-        groups.find((g) => g.value === currentRow?.group) ??
-        groups.find((g) => g.value !== 'auto') ??
-        groups[0]
-      form.setValue('group', fallback?.value ?? '')
-      if (currentGroup === 'auto') {
-        form.setValue('auto_groups', [])
-        form.setValue('auto_groups_mode', 'inherit')
-        form.setValue('cross_group_retry', false)
-      }
-    }
-  }, [groups, form, selectedGroup, currentRow?.group])
+  // Keep stored route-group values selectable during editing, including groups
+  // that are no longer present in the current user's effective route map.
 
   const onSubmit = async (data: ApiKeyFormValues) => {
     setIsSubmitting(true)
@@ -279,8 +275,12 @@ export function ApiKeysMutateDrawer({
       const basePayload = transformFormDataToPayload(data)
 
       if (isUpdate && currentRow) {
+        const updatePayload: ApiKeyUpdateData = { ...basePayload }
+        if (data.group === LEGACY_INHERIT_GROUP) {
+          delete updatePayload.group
+        }
         const result = await updateApiKey({
-          ...basePayload,
+          ...updatePayload,
           id: currentRow.id,
         })
         if (result.success) {
@@ -413,7 +413,7 @@ export function ApiKeysMutateDrawer({
                 name='group'
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>{t('Group')}</FormLabel>
+                    <FormLabel>{t('Route group')}</FormLabel>
                     <FormControl>
                       <ApiKeyGroupCombobox
                         options={groups}
@@ -430,7 +430,7 @@ export function ApiKeysMutateDrawer({
                             shouldDirty: true,
                           })
                         }}
-                        placeholder={t('Select a group')}
+                        placeholder={t('Select a route group')}
                       />
                     </FormControl>
                     <FormMessage />

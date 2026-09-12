@@ -17,8 +17,9 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { zodResolver } from '@hookform/resolvers/zod'
+import { useQuery } from '@tanstack/react-query'
 import { CalendarClock, CreditCard, RefreshCw, Settings2 } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useForm, type Resolver } from 'react-hook-form'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
@@ -66,7 +67,7 @@ import { getCurrencyDisplay, getCurrencyLabel } from '@/lib/currency'
 import {
   createPlan,
   updatePlan,
-  getGroups,
+  getAccountGroups,
   createWaffoPancakeSubscriptionProduct,
   listWaffoPancakeSubscriptionProductOptions,
 } from '../api'
@@ -99,7 +100,6 @@ export function SubscriptionsMutateDrawer({
   const tokensOnly = currencyMeta.kind === 'tokens'
   const currencyLabel = getCurrencyLabel()
   const [isSubmitting, setIsSubmitting] = useState(false)
-  const [groupOptions, setGroupOptions] = useState<string[]>([])
   const [creatingPancakeProduct, setCreatingPancakeProduct] = useState(false)
   const [pancakeProducts, setPancakeProducts] = useState<
     { id: string; name: string; status: string }[]
@@ -111,6 +111,14 @@ export function SubscriptionsMutateDrawer({
     defaultValues: PLAN_FORM_DEFAULTS,
   })
 
+  const { data: groupResponse } = useQuery({
+    queryKey: ['account-groups'],
+    queryFn: getAccountGroups,
+    enabled: open,
+    staleTime: 5 * 60 * 1000,
+  })
+  const groupOptions = useMemo(() => groupResponse?.data ?? [], [groupResponse])
+
   useEffect(() => {
     if (open) {
       if (currentRow?.plan) {
@@ -118,11 +126,6 @@ export function SubscriptionsMutateDrawer({
       } else {
         form.reset(PLAN_FORM_DEFAULTS)
       }
-      getGroups()
-        .then((res) => {
-          if (res.success) setGroupOptions(res.data || [])
-        })
-        .catch(() => {})
       // Best-effort — empty list still lets the operator use "+ Create".
       listWaffoPancakeSubscriptionProductOptions()
         .then((res) => {
@@ -142,6 +145,22 @@ export function SubscriptionsMutateDrawer({
         .catch(() => setPancakeProducts([]))
     }
   }, [open, currentRow, form])
+
+  const selectedUpgradeGroup = form.watch('upgrade_group')
+  const selectedDowngradeGroup = form.watch('downgrade_group')
+  const accountGroupOptions = useMemo(
+    () => [
+      ...new Set(
+        [selectedUpgradeGroup, selectedDowngradeGroup, ...groupOptions].filter(
+          (group): group is string => Boolean(group)
+        )
+      ),
+    ],
+    [groupOptions, selectedDowngradeGroup, selectedUpgradeGroup]
+  )
+
+  const getAccountGroupLabel = (group: string) =>
+    groupOptions.includes(group) ? group : `${group} (${t('Unknown')})`
 
   const durationUnit = form.watch('duration_unit')
   const resetPeriod = form.watch('quota_reset_period')
@@ -396,7 +415,10 @@ export function SubscriptionsMutateDrawer({
                       <Select
                         items={[
                           { value: '__none__', label: t('No Upgrade') },
-                          ...groupOptions.map((g) => ({ value: g, label: g })),
+                          ...accountGroupOptions.map((g) => ({
+                            value: g,
+                            label: getAccountGroupLabel(g),
+                          })),
                         ]}
                         onValueChange={(v) =>
                           field.onChange(v === '__none__' ? '' : v)
@@ -413,9 +435,9 @@ export function SubscriptionsMutateDrawer({
                             <SelectItem value='__none__'>
                               {t('No Upgrade')}
                             </SelectItem>
-                            {groupOptions.map((g) => (
+                            {accountGroupOptions.map((g) => (
                               <SelectItem key={g} value={g}>
-                                {g}
+                                {getAccountGroupLabel(g)}
                               </SelectItem>
                             ))}
                           </SelectGroup>
@@ -438,7 +460,10 @@ export function SubscriptionsMutateDrawer({
                             value: '__none__',
                             label: t('Downgrade to pre-purchase group'),
                           },
-                          ...groupOptions.map((g) => ({ value: g, label: g })),
+                          ...accountGroupOptions.map((g) => ({
+                            value: g,
+                            label: getAccountGroupLabel(g),
+                          })),
                         ]}
                         onValueChange={(v) =>
                           field.onChange(v === '__none__' ? '' : v)
@@ -457,9 +482,9 @@ export function SubscriptionsMutateDrawer({
                             <SelectItem value='__none__'>
                               {t('Downgrade to pre-purchase group')}
                             </SelectItem>
-                            {groupOptions.map((g) => (
+                            {accountGroupOptions.map((g) => (
                               <SelectItem key={g} value={g}>
-                                {g}
+                                {getAccountGroupLabel(g)}
                               </SelectItem>
                             ))}
                           </SelectGroup>

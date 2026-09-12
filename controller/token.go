@@ -50,6 +50,16 @@ func (input *tokenGroupInput) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
+type tokenCrossGroupRetryInput struct {
+	Set   bool
+	Value bool
+}
+
+func (input *tokenCrossGroupRetryInput) UnmarshalJSON(data []byte) error {
+	input.Set = true
+	return common.Unmarshal(data, &input.Value)
+}
+
 // normalizeCreateTokenGroup 将创建请求的路由组规范化为落库值：
 // 缺失或空值统一为 auto（新契约），显式 auto/固定组保持原值。
 func normalizeCreateTokenGroup(groupInput tokenGroupInput) string {
@@ -63,7 +73,8 @@ type tokenRequest struct {
 	model.Token
 	AutoGroups tokenAutoGroupsInput `json:"auto_groups"`
 	// GroupInput 仅在创建时使用，区分 group 缺失与显式空值；更新仍走 model.Token.Group。
-	GroupInput *tokenGroupInput `json:"-"`
+	GroupInput           *tokenGroupInput           `json:"-"`
+	CrossGroupRetryInput *tokenCrossGroupRetryInput `json:"-"`
 }
 
 func (r *tokenRequest) UnmarshalJSON(data []byte) error {
@@ -84,6 +95,13 @@ func (r *tokenRequest) UnmarshalJSON(data []byte) error {
 			return err
 		}
 		r.GroupInput = &groupInput
+	}
+	if raw, ok := rawFields["cross_group_retry"]; ok {
+		retryInput := tokenCrossGroupRetryInput{}
+		if err := common.Unmarshal(raw, &retryInput); err != nil {
+			return err
+		}
+		r.CrossGroupRetryInput = &retryInput
 	}
 	return nil
 }
@@ -474,7 +492,9 @@ func UpdateToken(c *gin.Context) {
 		cleanToken.ModelLimitsEnabled = token.ModelLimitsEnabled
 		cleanToken.ModelLimits = token.ModelLimits
 		cleanToken.AllowIps = token.AllowIps
-		cleanToken.CrossGroupRetry = token.CrossGroupRetry
+		if request.CrossGroupRetryInput != nil {
+			cleanToken.CrossGroupRetry = request.CrossGroupRetryInput.Value
+		}
 		// 更新契约：group 缺失时保留数据库原值，避免旧客户端静默改组；
 		// 显式空值视为改用 auto，显式值覆盖原值。
 		// GroupInput 只在请求原始 JSON 带 group 字段时非 nil，据此区分"缺失"与"显式值"。

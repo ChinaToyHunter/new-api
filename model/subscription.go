@@ -550,6 +550,24 @@ func GetSubscriptionPlanById(id int) (*SubscriptionPlan, error) {
 	return getSubscriptionPlanByIdTx(nil, id)
 }
 
+// GetSubscriptionPlanForUpdateTx reads a plan from the transaction while
+// holding its row lock. It intentionally bypasses the plan cache so update
+// validation observes the same persisted row that the transaction will write.
+func GetSubscriptionPlanForUpdateTx(tx *gorm.DB, id int) (*SubscriptionPlan, error) {
+	if tx == nil {
+		return nil, errors.New("subscription plan update transaction is nil")
+	}
+	if id <= 0 {
+		return nil, errors.New("invalid plan id")
+	}
+	var plan SubscriptionPlan
+	if err := lockForUpdate(tx).Where("id = ?", id).First(&plan).Error; err != nil {
+		return nil, err
+	}
+	plan.NormalizeDefaults()
+	return &plan, nil
+}
+
 func getSubscriptionPlanByIdTx(tx *gorm.DB, id int) (*SubscriptionPlan, error) {
 	if id <= 0 {
 		return nil, errors.New("invalid plan id")

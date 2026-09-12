@@ -28,6 +28,7 @@ import type {
   SystemTaskResponse,
   SystemUpdateCheckResponse,
   SystemUpdatePerformResponse,
+  SystemUpdateReleasesResponse,
   SystemUpdateStatusResponse,
   UpdateOptionRequest,
   UpdateOptionResponse,
@@ -42,6 +43,15 @@ export async function getSystemOptions() {
 
 export async function updateSystemOption(request: UpdateOptionRequest) {
   const res = await api.put<UpdateOptionResponse>('/api/option/', request)
+  return res.data
+}
+
+export async function updateSystemOptions(
+  options: Record<string, string | boolean | number>
+) {
+  const res = await api.put<UpdateOptionResponse>('/api/option/bulk', {
+    options,
+  })
   return res.data
 }
 
@@ -120,8 +130,18 @@ export async function checkSystemUpdate(force = false) {
   return res.data
 }
 
-export async function performSystemUpdate() {
-  const res = await api.post<SystemUpdatePerformResponse>('/api/system/update')
+export async function listSystemUpdateReleases() {
+  const res = await api.get<SystemUpdateReleasesResponse>(
+    '/api/system/update/releases'
+  )
+  return res.data
+}
+
+export async function performSystemUpdate(version?: string) {
+  const res = await api.post<SystemUpdatePerformResponse>(
+    '/api/system/update',
+    version ? { version } : undefined
+  )
   return res.data
 }
 

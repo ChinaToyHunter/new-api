@@ -32,8 +32,9 @@ func GetUserUsableGroups(userGroup string) map[string]string {
 				}
 			}
 		}
-		// 如果userGroup不在UserUsableGroups中，返回UserUsableGroups + userGroup
-		if _, ok := groupsCopy[userGroup]; !ok {
+		// Preserve same-name inheritance only when the account-group ID is
+		// also an independently configured routing/billing group.
+		if _, ok := groupsCopy[userGroup]; !ok && ratio_setting.ContainsGroupRatio(userGroup) {
 			groupsCopy[userGroup] = "用户分组"
 		}
 	}

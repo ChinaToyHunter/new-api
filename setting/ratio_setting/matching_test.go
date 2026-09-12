@@ -5,6 +5,7 @@ import (
 
 	"github.com/QuantumNous/new-api/setting/model_setting"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestFormatMatchingModelNameDoesNotStripBase(t *testing.T) {
@@ -35,4 +36,38 @@ func TestRoutingMatchModelNamePreservesExemptAtName(t *testing.T) {
 
 	assert.Equal(t, "opaque@sha256:deadbeef", RoutingMatchModelName("opaque@sha256:deadbeef"))
 	assert.Equal(t, "kimi-k2-thinking", RoutingMatchModelName("kimi-k2-thinking"))
+}
+
+func TestUpdateGroupGroupRatioRejectsNegativeAndPreservesExistingRatios(t *testing.T) {
+	original := GroupGroupRatio2JSONString()
+	t.Cleanup(func() { require.NoError(t, UpdateGroupGroupRatioByJSONString(original)) })
+	require.NoError(t, UpdateGroupGroupRatioByJSONString(`{"default":{"default":1.25}}`))
+
+	err := UpdateGroupGroupRatioByJSONString(`{"default":{"default":-0.5}}`)
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "group-group ratio must be not less than 0: default/default")
+	assert.JSONEq(t, `{"default":{"default":1.25}}`, GroupGroupRatio2JSONString())
+}
+
+func TestUpdateGroupGroupRatioAcceptsZero(t *testing.T) {
+	original := GroupGroupRatio2JSONString()
+	t.Cleanup(func() { require.NoError(t, UpdateGroupGroupRatioByJSONString(original)) })
+
+	require.NoError(t, UpdateGroupGroupRatioByJSONString(`{"free":{"default":0}}`))
+	ratio, ok := GetGroupGroupRatio("free", "default")
+	assert.True(t, ok)
+	assert.Zero(t, ratio)
+}
+
+func TestUpdateGroupRatioRejectsNegativeAndPreservesExistingRatios(t *testing.T) {
+	original := GroupRatio2JSONString()
+	t.Cleanup(func() { require.NoError(t, UpdateGroupRatioByJSONString(original)) })
+	require.NoError(t, UpdateGroupRatioByJSONString(`{"default":1.25}`))
+
+	err := UpdateGroupRatioByJSONString(`{"default":-0.5}`)
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "group ratio must be not less than 0: default")
+	assert.JSONEq(t, `{"default":1.25}`, GroupRatio2JSONString())
 }
