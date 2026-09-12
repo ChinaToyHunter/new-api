@@ -1086,6 +1086,42 @@ export function useChannelsColumns(
         enableSorting: false,
       },
 
+      // User-group annotation column (metadata only, not routing)
+      {
+        accessorKey: 'user_groups',
+        header: t('User Groups'),
+        meta: { mobileHidden: true },
+        cell: ({ row }) => {
+          const userGroups = row.getValue('user_groups') as string | null
+          const userGroupArray = parseGroupsList(userGroups ?? '')
+          if (userGroupArray.length === 0) {
+            return <span className='text-muted-foreground text-xs'>-</span>
+          }
+          return (
+            <BadgeListCell
+              items={userGroupArray.map((g) => (
+                <StatusBadge
+                  key={g}
+                  label={sensitiveVisible ? g : SENSITIVE_MASK}
+                  variant='neutral'
+                  size='sm'
+                />
+              ))}
+            />
+          )
+        },
+        filterFn: (row, id, value) => {
+          if (!value || value.length === 0 || value.includes('all')) {
+            return true
+          }
+          const userGroups = row.getValue(id) as string | null
+          const userGroupArray = parseGroupsList(userGroups ?? '')
+          return userGroupArray.some((g) => value.includes(g))
+        },
+        size: 150,
+        enableSorting: false,
+      },
+
       // Tag column
       {
         accessorKey: 'tag',

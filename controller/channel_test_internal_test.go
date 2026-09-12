@@ -164,6 +164,34 @@ func TestCopyChannelRejectsInvalidLegacyProxySettings(t *testing.T) {
 	assert.Equal(t, int64(1), channelCount)
 }
 
+func TestCopyChannelPreservesUserGroupsAnnotation(t *testing.T) {
+	db := setupModelListControllerTestDB(t)
+	userGroups := "default,vip"
+	origin := &model.Channel{
+		Type:       constant.ChannelTypeOpenAI,
+		Name:       "annotated channel",
+		Key:        "test-key",
+		Models:     "gpt-test",
+		Group:      "default",
+		UserGroups: &userGroups,
+	}
+	require.NoError(t, db.Create(origin).Error)
+
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Params = gin.Params{{Key: "id", Value: fmt.Sprintf("%d", origin.Id)}}
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/api/channel/copy", nil)
+
+	CopyChannel(ctx)
+
+	require.Contains(t, recorder.Body.String(), `"success":true`)
+	var copied model.Channel
+	err := db.Where("id != ?", origin.Id).First(&copied).Error
+	require.NoError(t, err)
+	require.NotNil(t, copied.UserGroups)
+	assert.Equal(t, []string{"default", "vip"}, copied.GetUserGroups())
+}
+
 func TestDeleteChannelResetsProxyCacheWhenPreReadFails(t *testing.T) {
 	db := setupModelListControllerTestDB(t)
 	require.NoError(t, db.AutoMigrate(&model.Log{}))

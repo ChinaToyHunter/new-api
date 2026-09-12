@@ -132,7 +132,8 @@ import {
   getAllModels,
   getChannel,
   getChannelKey,
-  getGroups,
+  getRouteGroups,
+  getAccountGroups,
   getPrefillGroups,
   getTaskPluginOptions,
   refreshCodexCredential,
@@ -677,9 +678,17 @@ export function ChannelMutateDrawer({
 
   // Fetch available groups
   const { data: groupsData, isLoading: isLoadingGroups } = useQuery({
-    queryKey: ['groups'],
-    queryFn: getGroups,
+    queryKey: ['route-groups'],
+    queryFn: getRouteGroups,
   })
+
+  // Fetch account groups for the user-group annotation field
+  const { data: accountGroupsData, isLoading: isLoadingAccountGroups } =
+    useQuery({
+      queryKey: ['account-groups'],
+      queryFn: getAccountGroups,
+      staleTime: 5 * 60 * 1000,
+    })
 
   // Fetch all available models
   const { data: allModelsData } = useQuery({
@@ -924,6 +933,22 @@ export function ChannelMutateDrawer({
       label: group,
     }))
   }, [groupsData, currentGroups])
+
+  // Watch the user-group annotation field so removed options stay listed
+  const currentUserGroups = form.watch('user_groups')
+
+  // Transform account groups to multi-select options (annotation only)
+  const userGroupOptions = useMemo(() => {
+    if (!accountGroupsData?.data) return []
+    const allGroups = new Set([
+      ...accountGroupsData.data,
+      ...(currentUserGroups || []),
+    ])
+    return [...allGroups].map((group) => ({
+      value: group,
+      label: group,
+    }))
+  }, [accountGroupsData, currentUserGroups])
 
   // Parse current models as array
   const currentModelsArray = useMemo(
@@ -3697,6 +3722,40 @@ export function ChannelMutateDrawer({
                                         onChange={field.onChange}
                                         placeholder={t(
                                           FIELD_PLACEHOLDERS.GROUP
+                                        )}
+                                      />
+                                    )}
+                                  </FormControl>
+                                  <FormMessage />
+                                </FormItem>
+                              )}
+                            />
+                          </div>
+
+                          <div className='border-border/60 rounded-lg border p-4'>
+                            <FormField
+                              control={form.control}
+                              name='user_groups'
+                              render={({ field }) => (
+                                <FormItem className='space-y-3'>
+                                  <div className='space-y-1'>
+                                    <FormLabel>
+                                      {t('User Groups (annotation)')}
+                                    </FormLabel>
+                                    <FormDescription>
+                                      {t(FIELD_DESCRIPTIONS.USER_GROUPS)}
+                                    </FormDescription>
+                                  </div>
+                                  <FormControl>
+                                    {isLoadingAccountGroups ? (
+                                      <Skeleton className='h-10 w-full' />
+                                    ) : (
+                                      <MultiSelect
+                                        options={userGroupOptions}
+                                        selected={field.value || []}
+                                        onChange={field.onChange}
+                                        placeholder={t(
+                                          FIELD_PLACEHOLDERS.USER_GROUPS
                                         )}
                                       />
                                     )}

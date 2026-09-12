@@ -477,6 +477,15 @@ func validateChannel(channel *model.Channel, isAdd bool) error {
 		return fmt.Errorf("channel cannot be empty")
 	}
 
+	// 校验账户组标注（不影响路由，仅作元数据）
+	if channel.UserGroups != nil {
+		normalized, err := model.NormalizeUserGroups(*channel.UserGroups)
+		if err != nil {
+			return err
+		}
+		channel.UserGroups = &normalized
+	}
+
 	// 校验 channel settings
 	if err := channel.ValidateSettings(); err != nil {
 		return fmt.Errorf("渠道额外设置[channel setting] 格式错误：%s", err.Error())
@@ -1133,6 +1142,9 @@ func UpdateChannel(c *gin.Context) {
 	}
 	if channel.Group != originChannel.Group {
 		changedFields = append(changedFields, "group")
+	}
+	if !equalStringPtr(channel.UserGroups, originChannel.UserGroups) {
+		changedFields = append(changedFields, "user_groups")
 	}
 	if channel.Type != originChannel.Type {
 		changedFields = append(changedFields, "type")

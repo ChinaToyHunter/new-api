@@ -14,6 +14,7 @@ import (
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/types"
+	"github.com/QuantumNous/new-api/setting"
 
 	"github.com/samber/lo"
 	"gorm.io/gorm"
@@ -38,6 +39,7 @@ type Channel struct {
 	BalanceUpdatedTime int64   `json:"balance_updated_time" gorm:"bigint"`
 	Models             string  `json:"models"`
 	Group              string  `json:"group" gorm:"type:varchar(64);default:'default'"`
+	UserGroups         *string `json:"user_groups" gorm:"type:varchar(255)"` // 账户组标注（不影响路由），逗号分隔的账户组 ID
 	UsedQuota          int64   `json:"used_quota" gorm:"bigint;default:0"`
 	ModelMapping       *string `json:"model_mapping" gorm:"type:text"`
 	//MaxInputTokens     *int    `json:"max_input_tokens" gorm:"default:0"`
@@ -307,6 +309,52 @@ func (channel *Channel) GetGroups() []string {
 		groups[i] = strings.TrimSpace(group)
 	}
 	return groups
+}
+
+// GetUserGroups parses the comma-separated account-group annotation. Empty or
+// whitespace-only values (including the legacy NULL column) mean "not
+// annotated".
+func (channel *Channel) GetUserGroups() []string {
+	if channel.UserGroups == nil {
+		return []string{}
+	}
+	groups := strings.Split(strings.Trim(*channel.UserGroups, ","), ",")
+	result := make([]string, 0, len(groups))
+	for _, group := range groups {
+		group = strings.TrimSpace(group)
+		if group != "" {
+			result = append(result, group)
+		}
+	}
+	return result
+}
+
+// NormalizeUserGroups validates the comma-separated account-group annotation
+// against the account-group catalog. Empty input clears the annotation.
+// Account groups never influence routing; this field is metadata only.
+func NormalizeUserGroups(userGroups string) (string, error) {
+	userGroups = strings.TrimSpace(userGroups)
+	if userGroups == "" {
+		return "", nil
+	}
+	parts := strings.Split(userGroups, ",")
+	cleaned := make([]string, 0, len(parts))
+	seen := make(map[string]struct{}, len(parts))
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		if _, duplicate := seen[part]; duplicate {
+			continue
+		}
+		if !setting.ContainsAccountGroup(part) {
+			return "", fmt.Errorf("未知账户组: %s", part)
+		}
+		seen[part] = struct{}{}
+		cleaned = append(cleaned, part)
+	}
+	return strings.Join(cleaned, ","), nil
 }
 
 func (channel *Channel) GetOtherInfo() map[string]interface{} {

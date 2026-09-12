@@ -16,7 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { getGroups as getUserGroups } from '@/features/users/api'
+import { getAccountGroups, getRouteGroups } from '@/features/users/api'
 import { api, type ApiRequestConfig } from '@/lib/api'
 
 import type {
@@ -635,9 +635,11 @@ export async function getOllamaVersion(
 // ============================================================================
 
 /**
- * Get all available groups (re-exported from users API for convenience)
+ * Get route groups used for channel routing and access control.
+ * Get account groups (user catalog) for channel annotation metadata.
  */
-export const getGroups = getUserGroups
+export { getRouteGroups }
+export { getAccountGroups }
 
 // ============================================================================
 // Prefill Groups (Model Groups)
