@@ -33,6 +33,7 @@ import {
   sideDrawerSwitchItemClassName,
 } from '@/components/drawer-layout'
 import { Button } from '@/components/ui/button'
+import { Combobox } from '@/components/ui/combobox'
 import {
   Form,
   FormControl,
@@ -63,6 +64,8 @@ import {
 } from '@/components/ui/sheet'
 import { Switch } from '@/components/ui/switch'
 import { getCurrencyDisplay, getCurrencyLabel } from '@/lib/currency'
+import { handleServerError } from '@/lib/handle-server-error'
+import { requireServerSuccess } from '@/lib/server-error-message'
 
 import {
   createPlan,
@@ -113,7 +116,7 @@ export function SubscriptionsMutateDrawer({
 
   const { data: groupResponse } = useQuery({
     queryKey: ['account-groups'],
-    queryFn: getAccountGroups,
+    queryFn: async () => requireServerSuccess(await getAccountGroups()),
     enabled: open,
     staleTime: 5 * 60 * 1000,
   })
@@ -182,6 +185,8 @@ export function SubscriptionsMutateDrawer({
           toast.success(t('Update succeeded'))
           onOpenChange(false)
           triggerRefresh()
+        } else {
+          handleServerError(res)
         }
       } else {
         const res = await createPlan(payload)
@@ -189,10 +194,12 @@ export function SubscriptionsMutateDrawer({
           toast.success(t('Create succeeded'))
           onOpenChange(false)
           triggerRefresh()
+        } else {
+          handleServerError(res)
         }
       }
-    } catch {
-      toast.error(t('Request failed'))
+    } catch (error) {
+      handleServerError(error, t('Request failed'))
     } finally {
       setIsSubmitting(false)
     }
@@ -249,14 +256,15 @@ export function SubscriptionsMutateDrawer({
         )
       } else {
         const reason = typeof res.data === 'string' ? res.data : undefined
-        toast.error(
-          reason
+        handleServerError(res.data, undefined, {
+          title: reason
             ? `${t('Waffo Pancake product creation failed')}: ${reason}`
-            : t('Waffo Pancake product creation failed')
-        )
+            : t('Waffo Pancake product creation failed'),
+        })
       }
     } catch (err) {
-      toast.error(
+      handleServerError(
+        err,
         `${t('Waffo Pancake product creation failed')}: ${err instanceof Error ? err.message : String(err)}`
       )
     } finally {
@@ -826,23 +834,14 @@ export function SubscriptionsMutateDrawer({
                     <FormItem>
                       <FormLabel>Waffo Pancake Product ID</FormLabel>
                       <div className='flex gap-2'>
-                        <Select
-                          items={items}
+                        <Combobox
+                          options={items}
                           value={field.value || ''}
                           onValueChange={(v) => field.onChange(v)}
                           disabled={items.length === 0}
-                        >
-                          <SelectTrigger className='w-full flex-1'>
-                            <SelectValue placeholder={t('Select a product')} />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {items.map((item) => (
-                              <SelectItem key={item.value} value={item.value}>
-                                {item.label}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
+                          className='w-full flex-1'
+                          placeholder={t('Select a product')}
+                        />
                         <Button
                           type='button'
                           variant='outline'
