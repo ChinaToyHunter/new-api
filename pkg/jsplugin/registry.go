@@ -208,6 +208,7 @@ type Registry struct {
 	activeOverride  map[string]*LoadedPlugin
 	disabledFactory map[string]struct{}
 	masterEnabled   atomic.Bool
+	overrideEnabled atomic.Bool
 	generation      atomic.Pointer[RoutingGeneration]
 	preparer        RoutingGenerationPreparer
 	routingErrors   map[string]string
@@ -223,6 +224,7 @@ func NewRegistry() *Registry {
 		routingErrors:  make(map[string]string),
 	}
 	registry.masterEnabled.Store(true)
+	registry.overrideEnabled.Store(true)
 	generation, _ := buildRoutingGeneration(registry.factory, registry.override, 0)
 	registry.generation.Store(generation)
 	registry.lastRebuild = RoutingRebuildOutcome{
@@ -495,6 +497,39 @@ func (r *Registry) Enabled() bool {
 	return r.masterEnabled.Load()
 }
 
+// OverrideEnabled reports whether database-backed overrides participate in
+// runtime routing. The desired override map is retained while disabled.
+func (r *Registry) OverrideEnabled() bool {
+	return r.overrideEnabled.Load()
+}
+
+// SetOverrideEnabled rebuilds routing with the requested override-layer state.
+// The flag is published only after the candidate generation is prepared, so a
+// failed rebuild leaves the current runtime state and desired overrides intact.
+func (r *Registry) SetOverrideEnabled(enabled bool) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.overrideEnabled.Load() == enabled {
+		return nil
+	}
+	previous := r.overrideEnabled.Load()
+	generation, routingErrors, err := r.prepareGenerationWithOverrideEnabled(
+		filterDisabledFactory(r.factory, r.disabledFactory),
+		r.override,
+		true,
+		pluginMapKeys(r.override),
+		enabled,
+	)
+	if err != nil {
+		r.overrideEnabled.Store(previous)
+		r.recordRebuildFailure(err)
+		return err
+	}
+	r.overrideEnabled.Store(enabled)
+	r.publishGeneration(generation, routingErrors, r.resolveActiveOverrides(generation, r.override))
+	return nil
+}
+
 func (r *Registry) SetEnabled(enabled bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -669,8 +704,25 @@ func (r *Registry) prepareGeneration(
 	tolerateConflicts bool,
 	retainCurrent map[string]struct{},
 ) (*RoutingGeneration, map[string]string, error) {
+	return r.prepareGenerationWithOverrideEnabled(
+		factory,
+		override,
+		tolerateConflicts,
+		retainCurrent,
+		r.overrideEnabled.Load(),
+	)
+}
+
+func (r *Registry) prepareGenerationWithOverrideEnabled(
+	factory, override map[string]*LoadedPlugin,
+	tolerateConflicts bool,
+	retainCurrent map[string]struct{},
+	overrideEnabled bool,
+) (*RoutingGeneration, map[string]string, error) {
 	if !r.masterEnabled.Load() {
 		factory = map[string]*LoadedPlugin{}
+		override = map[string]*LoadedPlugin{}
+	} else if !overrideEnabled {
 		override = map[string]*LoadedPlugin{}
 	}
 	current := r.generation.Load()
@@ -688,6 +740,20 @@ func (r *Registry) prepareGeneration(
 	} else {
 		generation, err = buildRoutingGeneration(factory, override, number)
 		routingErrors = make(map[string]string)
+		if err == nil {
+			// A strict mutation must remain valid if the override layer is
+			// toggled later. Validate the alternate layer position before
+			// publishing the desired maps.
+			var alternateOverride map[string]*LoadedPlugin
+			if overrideEnabled {
+				alternateOverride = map[string]*LoadedPlugin{}
+			} else {
+				alternateOverride = override
+			}
+			if _, alternateErr := buildRoutingGeneration(factory, alternateOverride, number); alternateErr != nil {
+				return nil, nil, alternateErr
+			}
+		}
 	}
 	if err != nil {
 		return nil, nil, err

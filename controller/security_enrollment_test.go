@@ -89,6 +89,10 @@ func setupSecurityEnrollmentTest(t *testing.T) (*model.User, service.AuthIdentit
 		if err == nil {
 			_ = connection.Close()
 		}
+		logConnection, err := logDB.DB()
+		if err == nil {
+			_ = logConnection.Close()
+		}
 	})
 	password, err := common.Password2Hash("enrollment-password")
 	require.NoError(t, err)
@@ -251,7 +255,9 @@ func TestSecurityEnrollmentAccessTokenLifecycleConsumesProofs(t *testing.T) {
 		require.NoError(t, err)
 		require.NotNil(t, stored)
 		assert.Equal(t, user.Id, stored.Id)
-		assert.Equal(t, model.AccessTokenFingerprint(token), model.AccessTokenFingerprint(stored.GetAccessToken()))
+		status, err := model.GetUserAccessTokenStatus(user.Id)
+		require.NoError(t, err)
+		assert.Equal(t, model.AccessTokenFingerprint(token), status.TokenRef)
 		oldUser, err := model.ValidateAccessToken(previousToken)
 		assert.Nil(t, oldUser)
 		require.NoError(t, err)

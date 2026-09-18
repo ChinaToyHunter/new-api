@@ -6,11 +6,13 @@ import (
 	"encoding/pem"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/relaykit/dto"
@@ -488,4 +490,78 @@ func TestNormalizeHTTPTransportPolicyClampsWithoutPanic(t *testing.T) {
 	assert.Equal(t, HTTPTransportPolicy{Protocol: dto.HTTPProtocolAuto, Shards: 1}, NormalizeHTTPTransportPolicy(dto.ChannelSettings{HTTPProtocol: "http3"}))
 	assert.Equal(t, HTTPTransportPolicy{Protocol: dto.HTTPProtocolAuto, Shards: 1}, NormalizeHTTPTransportPolicy(dto.ChannelSettings{HTTP2ConnectionShards: -3}))
 	assert.Equal(t, HTTPTransportPolicy{Protocol: dto.HTTPProtocolAuto, Shards: 8}, NormalizeHTTPTransportPolicy(dto.ChannelSettings{HTTP2ConnectionShards: 99}))
+}
+
+func TestNewRelayHTTPTransportClampsResponseHeaderTimeout(t *testing.T) {
+	previous := common.RelayResponseHeaderTimeout
+	t.Cleanup(func() { common.RelayResponseHeaderTimeout = previous })
+
+	overflowingSeconds := common.MaxTimeoutSeconds
+	if int64(int(overflowingSeconds)) != overflowingSeconds {
+		t.Skip("int cannot represent a timeout larger than time.Duration on this architecture")
+	}
+	overflowingSeconds++
+	common.RelayResponseHeaderTimeout = int(overflowingSeconds)
+	transport := newRelayHTTPTransport()
+	assert.Equal(t, time.Duration(common.MaxTimeoutSeconds)*time.Second, transport.ResponseHeaderTimeout)
+
+	common.RelayResponseHeaderTimeout = math.MinInt
+	transport = newRelayHTTPTransport()
+	assert.Zero(t, transport.ResponseHeaderTimeout, "negative values must disable the optional timeout")
+}
+
+// protectedFetchIdleConnTimeout returns the idle-connection timeout the
+// SSRF-protected client gives to the transport it builds for direct fetches.
+func protectedFetchIdleConnTimeout(t *testing.T) time.Duration {
+	t.Helper()
+	client := newProtectedFetchHTTPClientWithProxy(nil, nil, nil, http.ProxyFromEnvironment)
+	roundTripper, ok := client.Transport.(*ssrfProtectedRoundTripper)
+	require.True(t, ok)
+	return roundTripper.transportFor(nil).IdleConnTimeout
+}
+
+func TestRelayHTTPClientClampsRelayTimeout(t *testing.T) {
+	previous := common.RelayTimeout
+	t.Cleanup(func() { common.RelayTimeout = previous })
+
+	common.RelayTimeout = 30
+	assert.Equal(t, 30*time.Second, newRelayHTTPClient(nil).Timeout)
+
+	common.RelayTimeout = 0
+	assert.Zero(t, newRelayHTTPClient(nil).Timeout, "zero keeps the relay client unbounded")
+	assert.Zero(t, newProtectedFetchHTTPClientWithProxy(nil, nil, nil, http.ProxyFromEnvironment).Timeout)
+
+	common.RelayTimeout = -90
+	assert.Zero(t, newRelayHTTPClient(nil).Timeout, "a negative timeout must not become a negative client timeout")
+	assert.Zero(t, newProtectedFetchHTTPClientWithProxy(nil, nil, nil, http.ProxyFromEnvironment).Timeout)
+
+	// On 64-bit platforms this value overflows time.Duration when multiplied by
+	// time.Second and wraps into a negative timeout, which cancels every relay
+	// request immediately. On 32-bit platforms int cannot hold a value that
+	// overflows, so the case only asserts the invariant there.
+	overflowingSeconds := common.MaxTimeoutSeconds + 1
+	common.RelayTimeout = int(overflowingSeconds)
+	require.Positive(t, newRelayHTTPClient(nil).Timeout)
+	require.LessOrEqual(t, newRelayHTTPClient(nil).Timeout, time.Duration(common.MaxTimeoutSeconds)*time.Second)
+}
+
+func TestRelayIdleConnTimeoutClampsOversizedValues(t *testing.T) {
+	previous := common.RelayIdleConnTimeout
+	t.Cleanup(func() { common.RelayIdleConnTimeout = previous })
+
+	common.RelayIdleConnTimeout = 90
+	assert.Equal(t, 90*time.Second, newRelayHTTPTransport().IdleConnTimeout)
+	assert.Equal(t, 90*time.Second, protectedFetchIdleConnTimeout(t))
+
+	common.RelayIdleConnTimeout = -90
+	assert.Zero(t, newRelayHTTPTransport().IdleConnTimeout, "a negative idle timeout must not become a negative duration")
+	assert.Zero(t, protectedFetchIdleConnTimeout(t))
+
+	// See TestRelayHTTPClientClampsRelayTimeout for the architecture note.
+	overflowingSeconds := common.MaxTimeoutSeconds + 1
+	common.RelayIdleConnTimeout = int(overflowingSeconds)
+	require.Positive(t, newRelayHTTPTransport().IdleConnTimeout)
+	require.LessOrEqual(t, newRelayHTTPTransport().IdleConnTimeout, time.Duration(common.MaxTimeoutSeconds)*time.Second)
+	require.Positive(t, protectedFetchIdleConnTimeout(t))
+	require.LessOrEqual(t, protectedFetchIdleConnTimeout(t), time.Duration(common.MaxTimeoutSeconds)*time.Second)
 }

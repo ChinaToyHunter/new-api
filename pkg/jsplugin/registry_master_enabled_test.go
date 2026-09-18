@@ -1,6 +1,7 @@
 package jsplugin
 
 import (
+	"errors"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -138,4 +139,67 @@ func TestRegistryMasterSwitchIsOrthogonalToLayerFlags(t *testing.T) {
 	plugin, ok := registry.Get("test")
 	require.True(t, ok)
 	assert.Equal(t, "1.0.0-factory", plugin.Meta.Version)
+}
+
+func TestRegistryOverrideLayerCanBeDisabledWithoutDiscardingDesiredOverrides(t *testing.T) {
+	registry := NewRegistry()
+	require.NoError(t, registerTestPlugin(registry, "1.0.0-factory", true))
+	require.NoError(t, registerTestPlugin(registry, "1.0.0-override", false))
+	before := registry.Generation()
+	beforeOverride := registry.OverridePlugins()["test"]
+
+	require.NoError(t, registry.SetOverrideEnabled(false))
+	plugin, ok := registry.Get("test")
+	require.True(t, ok)
+	assert.Equal(t, "1.0.0-factory", plugin.Meta.Version)
+	assert.False(t, registry.OverrideEnabled())
+	assert.Empty(t, registry.ActiveOverridePlugins())
+	assert.Same(t, beforeOverride, registry.OverridePlugins()["test"])
+	assert.Greater(t, registry.Generation().Number, before.Number)
+
+	require.NoError(t, registry.SetOverrideEnabled(true))
+	plugin, ok = registry.Get("test")
+	require.True(t, ok)
+	assert.Equal(t, "1.0.0-override", plugin.Meta.Version)
+	assert.True(t, registry.OverrideEnabled())
+	assert.Same(t, registry.OverridePlugins()["test"], registry.ActiveOverridePlugins()["test"])
+}
+
+func TestRegistryOverrideLayerNoOpKeepsGeneration(t *testing.T) {
+	registry := NewRegistry()
+	require.NoError(t, registerTestPlugin(registry, "1.0.0-override", false))
+	before := registry.Generation()
+
+	require.NoError(t, registry.SetOverrideEnabled(true))
+	assert.Same(t, before, registry.Generation())
+
+	require.NoError(t, registry.SetOverrideEnabled(false))
+	before = registry.Generation()
+	require.NoError(t, registry.SetOverrideEnabled(false))
+	assert.Same(t, before, registry.Generation())
+}
+
+func TestRegistryOverrideLayerToggleRetainsStateWhenRebuildFails(t *testing.T) {
+	registry := NewRegistry()
+	require.NoError(t, registerTestPlugin(registry, "1.0.0-factory", true))
+	require.NoError(t, registerTestPlugin(registry, "1.0.0-override", false))
+	shouldFail := false
+	require.NoError(t, registry.SetGenerationPreparer(func(candidate, _ *RoutingGeneration) (PreparedRoutingGeneration, error) {
+		if shouldFail {
+			return PreparedRoutingGeneration{}, errors.New("forced override toggle failure")
+		}
+		return PreparedRoutingGeneration{Generation: candidate}, nil
+	}))
+	beforeGeneration := registry.Generation()
+	beforeOverride := registry.OverridePlugins()["test"]
+	beforeActive := registry.ActiveOverridePlugins()["test"]
+	shouldFail = true
+
+	err := registry.SetOverrideEnabled(false)
+	require.ErrorContains(t, err, "forced override toggle failure")
+	assert.True(t, registry.OverrideEnabled())
+	assert.Same(t, beforeGeneration, registry.Generation())
+	assert.Same(t, beforeOverride, registry.OverridePlugins()["test"])
+	assert.Same(t, beforeActive, registry.ActiveOverridePlugins()["test"])
+	assert.Equal(t, "failed", registry.LastRebuildOutcome().Status)
 }

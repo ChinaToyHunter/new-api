@@ -67,12 +67,12 @@ async function renderFilter(
   }
 ) {
   vi.spyOn(api, 'get').mockImplementation(async (url) => {
-    if (url === '/api/user/self/groups' || url === '/api/group/') {
+    if (url === '/api/user/self/groups' || url === '/api/route-groups/') {
       if (groups === null) throw new Error('Group loading failed')
       return {
         data: {
           success: true,
-          data: url === '/api/group/' ? Object.keys(groups) : groups,
+          data: url === '/api/route-groups/' ? Object.keys(groups) : groups,
         },
       }
     }
@@ -142,7 +142,7 @@ it('loads personal groups and filters choices without submitting until Search', 
     })
   )
   expect(api.get).toHaveBeenCalledWith('/api/user/self/groups')
-  expect(api.get).not.toHaveBeenCalledWith('/api/group/')
+  expect(api.get).not.toHaveBeenCalledWith('/api/route-groups/')
 })
 
 it('loads all groups in the administrator view', async () => {
@@ -150,7 +150,7 @@ it('loads all groups in the administrator view', async () => {
   await renderFilter()
   await userEvent.click(screen.getByRole('combobox', { name: 'Group' }))
   expect(await screen.findByRole('option', { name: 'premium' })).toBeVisible()
-  expect(api.get).toHaveBeenCalledWith('/api/group/')
+  expect(api.get).toHaveBeenCalledWith('/api/route-groups/')
   expect(api.get).not.toHaveBeenCalledWith('/api/user/self/groups')
 })
 

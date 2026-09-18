@@ -16,7 +16,7 @@ import (
 func TestComputeTieredQuota_ClampOnOverflow(t *testing.T) {
 	// exprOutput = p * 1e12 = 1e21; quotaBeforeGroup = 1e21 / 1e6 * 5e5 = 5e20,
 	// which far exceeds the supported single-request range and must saturate.
-	exprStr := `tier("base", p * 1000000000000)`
+	exprStr := `tier("base", p * 1e12)`
 	snap := &billingexpr.BillingSnapshot{
 		BillingMode:  "tiered_expr",
 		ExprString:   exprStr,
@@ -31,7 +31,7 @@ func TestComputeTieredQuota_ClampOnOverflow(t *testing.T) {
 	assert.Equal(t, common.MaxQuota, result.ActualQuotaAfterGroup, "oversized quota must clamp, never wrap negative")
 	require.NotNil(t, result.Clamp, "clamp event must be surfaced so it can be audited")
 	assert.Equal(t, common.QuotaClampOverflow, result.Clamp.Kind)
-	assert.Equal(t, common.MaxQuota, result.Clamp.Clamped)
+	assert.Equal(t, int64(common.MaxQuota), result.Clamp.Clamped)
 }
 
 // TestComputeTieredQuota_NoClampInRange confirms an in-range settlement leaves

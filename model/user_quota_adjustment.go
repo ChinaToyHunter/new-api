@@ -19,11 +19,11 @@ var (
 type UserQuotaAdjustment struct {
 	UserID   int
 	Username string
-	Before   int
-	After    int
+	Before   int64
+	After    int64
 }
 
-func AdjustUserQuota(userID, operatorRole int, mode string, value int) (*UserQuotaAdjustment, error) {
+func AdjustUserQuota(userID, operatorRole int, mode string, value int64) (*UserQuotaAdjustment, error) {
 	if userID <= 0 || (mode != "add" && mode != "subtract" && mode != "override") {
 		return nil, ErrInvalidUserQuotaAdjustment
 	}
@@ -46,12 +46,12 @@ func AdjustUserQuota(userID, operatorRole int, mode string, value int) (*UserQuo
 		if user.Quota > common.MaxWalletQuota || user.Quota < -common.MaxWalletQuota {
 			return ErrWalletQuotaLimitExceeded
 		}
-		quota := decimal.NewFromInt(int64(value))
+		quota := decimal.NewFromInt(value)
 		switch mode {
 		case "add":
-			quota = decimal.NewFromInt(int64(user.Quota)).Add(quota)
+			quota = decimal.NewFromInt(user.Quota).Add(quota)
 		case "subtract":
-			quota = decimal.NewFromInt(int64(user.Quota)).Sub(quota)
+			quota = decimal.NewFromInt(user.Quota).Sub(quota)
 		}
 		after, err := common.WalletQuotaFromDecimalStrict(quota)
 		if err != nil {
@@ -77,7 +77,7 @@ func AdjustUserQuota(userID, operatorRole int, mode string, value int) (*UserQuo
 
 	// Apply only the committed difference, preserving outstanding reservations.
 	// Both balances are bounded above, so their difference fits in int64.
-	delta := int64(adjustment.After) - int64(adjustment.Before)
+	delta := adjustment.After - adjustment.Before
 	if delta != 0 {
 		if err := cacheIncrUserQuota(userID, delta); err != nil {
 			common.SysError(fmt.Sprintf("failed to sync manual quota adjustment for user %d: %s", userID, err))

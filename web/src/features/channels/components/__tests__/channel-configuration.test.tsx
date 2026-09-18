@@ -162,7 +162,7 @@ beforeEach(() => {
         },
       }
     }
-    if (url === '/api/group/') {
+    if (url === '/api/route-groups/' || url === '/api/account-groups/') {
       return { data: { success: true, data: ['default', 'premium'] } }
     }
     if (url === '/api/prefill_group') {

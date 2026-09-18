@@ -71,7 +71,7 @@ function renderPermissions(viewerRole: number, allowed?: boolean) {
         },
       }
     }
-    if (url === '/api/group/') {
+    if (url === '/api/account-groups/') {
       return { data: { success: true, data: ['default'] } }
     }
     return {

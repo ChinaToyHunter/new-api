@@ -17,6 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { isRedirect } from '@tanstack/react-router'
 import { cleanup, renderHook, waitFor } from '@testing-library/react'
 import type { ReactNode } from 'react'
 import { afterEach, beforeEach, describe, expect, test } from 'vitest'
@@ -27,11 +28,14 @@ import {
   getModuleAccessForGuard,
   type HeaderNavModule,
 } from '@/lib/nav-modules'
+import { ROLE } from '@/lib/roles'
 import {
   STATUS_QUERY_KEY,
   ensureStatus,
   statusQueryOptions,
 } from '@/lib/status-query'
+import { Route } from '@/routes/model-status/index'
+import { useAuthStore } from '@/stores/auth-store'
 import { useSystemConfigStore } from '@/stores/system-config-store'
 
 /**
@@ -262,4 +266,120 @@ describe('module guard status freshness', () => {
       })
     }
   )
+})
+
+/**
+ * The model-status page is a header nav module like pricing and rankings, so
+ * its route guard must resolve access through the shared status cache and keep
+ * the same redirect contract: disabled modules go home, unauthenticated
+ * visitors keep their destination in the sign-in redirect, and a status failure
+ * fails closed instead of rendering the page.
+ */
+
+function stubStatusModules(modules: Record<string, unknown>): void {
+  apiClient.get = async (url) => {
+    if (url !== '/api/status') throw new Error(`Unexpected GET ${url}`)
+    statusRequests.push(url)
+    return { data: { success: true, data: { HeaderNavModules: modules } } }
+  }
+}
+
+const modelStatusBeforeLoad = Route.options
+  .beforeLoad as unknown as (args: {
+  context: { queryClient: QueryClient }
+  location: { href: string }
+}) => Promise<void>
+
+async function runModelStatusGuard(queryClient: QueryClient, href: string) {
+  try {
+    await modelStatusBeforeLoad({
+      context: { queryClient },
+      location: { href },
+    })
+    return null
+  } catch (error) {
+    expect(isRedirect(error)).toBe(true)
+    // `redirect()` throws the redirect as a Response whose `options` carry the
+    // destination the router will navigate to.
+    return error as {
+      options: { to: string; search?: Record<string, unknown> }
+    }
+  }
+}
+
+describe('model-status route guard', () => {
+  const originalAuth = useAuthStore.getState().auth
+
+  beforeEach(() => {
+    useAuthStore.setState({ auth: { ...originalAuth, user: null } })
+  })
+
+  afterEach(() => {
+    useAuthStore.setState({ auth: originalAuth })
+  })
+
+  function signIn() {
+    useAuthStore.setState({
+      auth: {
+        ...useAuthStore.getState().auth,
+        user: { id: 7, username: 'visitor', role: ROLE.USER },
+      },
+    })
+  }
+
+  test('redirects home when the module is disabled', async () => {
+    stubStatusModules({
+      'model-status': { enabled: false, requireAuth: false },
+    })
+
+    expect(
+      await runModelStatusGuard(createQueryClient(), '/model-status')
+    ).toMatchObject({
+      options: { to: '/' },
+    })
+  })
+
+  test('sends unauthenticated visitors to sign-in with their destination', async () => {
+    stubStatusModules({ 'model-status': { enabled: true, requireAuth: true } })
+
+    expect(
+      await runModelStatusGuard(
+        createQueryClient(),
+        '/model-status?group=default'
+      )
+    ).toMatchObject({
+      options: {
+        to: '/sign-in',
+        search: { redirect: '/model-status?group=default' },
+      },
+    })
+  })
+
+  test('admits an authenticated visitor when the module requires auth', async () => {
+    stubStatusModules({ 'model-status': { enabled: true, requireAuth: true } })
+    signIn()
+
+    expect(
+      await runModelStatusGuard(createQueryClient(), '/model-status')
+    ).toBeNull()
+  })
+
+  test('admits visitors when the module is public', async () => {
+    stubStatusModules({ 'model-status': { enabled: true, requireAuth: false } })
+
+    expect(
+      await runModelStatusGuard(createQueryClient(), '/model-status')
+    ).toBeNull()
+  })
+
+  test('fails closed when the status request fails', async () => {
+    apiClient.get = async () => {
+      throw new Error('Status unavailable')
+    }
+    signIn()
+
+    expect(
+      await runModelStatusGuard(createQueryClient(), '/model-status')
+    ).toMatchObject({ options: { to: '/' } })
+  })
 })

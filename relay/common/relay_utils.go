@@ -146,9 +146,19 @@ func validatePrompt(prompt string) *dto.TaskError {
 const MaxTaskDurationSeconds = 3600
 
 func validateTaskDurationBounds(req TaskSubmitReq) *dto.TaskError {
+	if req.durationInvalid {
+		return createTaskError(fmt.Errorf("seconds must be between 1 and %d", MaxTaskDurationSeconds), "invalid_seconds", http.StatusBadRequest, true)
+	}
+
 	seconds := req.Duration
-	if seconds == 0 && req.Seconds != "" {
-		seconds, _ = strconv.Atoi(req.Seconds)
+	if req.Seconds != "" {
+		parsed, err := strconv.ParseInt(strings.TrimSpace(req.Seconds), 10, 64)
+		if err != nil || parsed < 0 || parsed > MaxTaskDurationSeconds {
+			return createTaskError(fmt.Errorf("seconds must be between 1 and %d", MaxTaskDurationSeconds), "invalid_seconds", http.StatusBadRequest, true)
+		}
+		if parsed != 0 || seconds == 0 {
+			seconds = int(parsed)
+		}
 	}
 	if seconds < 0 || seconds > MaxTaskDurationSeconds {
 		return createTaskError(fmt.Errorf("seconds must be between 1 and %d", MaxTaskDurationSeconds), "invalid_seconds", http.StatusBadRequest, true)
@@ -156,7 +166,7 @@ func validateTaskDurationBounds(req TaskSubmitReq) *dto.TaskError {
 	return nil
 }
 
-func validateMultipartTaskRequest(c *gin.Context, info *RelayInfo, action string) (TaskSubmitReq, error) {
+func validateMultipartTaskRequest(c *gin.Context, _ *RelayInfo, _ string) (TaskSubmitReq, error) {
 	var req TaskSubmitReq
 	if _, err := c.MultipartForm(); err != nil {
 		return req, err
@@ -173,8 +183,11 @@ func validateMultipartTaskRequest(c *gin.Context, info *RelayInfo, action string
 	}
 
 	if durationStr := formData.Get("seconds"); durationStr != "" {
-		if duration, err := strconv.Atoi(durationStr); err == nil {
-			req.Duration = duration
+		req.Seconds = durationStr
+		if duration, err := strconv.ParseInt(strings.TrimSpace(durationStr), 10, 64); err == nil && duration >= 0 && duration <= MaxTaskDurationSeconds {
+			req.Duration = int(duration)
+		} else {
+			req.durationInvalid = true
 		}
 	}
 

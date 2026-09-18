@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"sync"
@@ -188,6 +189,12 @@ func TestNewAwsInvokeContextInheritsParent(t *testing.T) {
 		common.RelayTimeout = originalRelayTimeout
 	})
 
+	// This many seconds overflow a time.Duration on 64-bit platforms and wrap
+	// the invoke deadline into the past, cancelling every AWS call at once. On
+	// 32-bit platforms int cannot hold a value that overflows, so the case only
+	// asserts the invariant there.
+	overflowingSeconds := math.MaxInt64/int64(time.Second) + 1
+
 	tests := []struct {
 		name         string
 		relayTimeout int
@@ -195,6 +202,7 @@ func TestNewAwsInvokeContextInheritsParent(t *testing.T) {
 	}{
 		{name: "without relay timeout", relayTimeout: 0, wantDeadline: false},
 		{name: "with relay timeout", relayTimeout: 30, wantDeadline: true},
+		{name: "oversized relay timeout", relayTimeout: int(overflowingSeconds), wantDeadline: true},
 	}
 
 	for _, test := range tests {
@@ -204,8 +212,11 @@ func TestNewAwsInvokeContextInheritsParent(t *testing.T) {
 			invokeContext, cancelInvoke := newAwsInvokeContext(parent)
 			defer cancelInvoke()
 
-			_, hasDeadline := invokeContext.Deadline()
+			deadline, hasDeadline := invokeContext.Deadline()
 			assert.Equal(t, test.wantDeadline, hasDeadline)
+			if test.wantDeadline {
+				assert.True(t, deadline.After(time.Now()), "a configured relay timeout must not already be expired")
+			}
 
 			cancelParent()
 			require.ErrorIs(t, invokeContext.Err(), context.Canceled)

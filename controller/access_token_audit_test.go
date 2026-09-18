@@ -2,6 +2,7 @@ package controller
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"net"
@@ -434,12 +435,35 @@ func (releasedAuditLog) TableName() string { return "logs" }
 
 // External tests create a new database per case on a loopback-only disposable
 // instance. They never drop databases or tables supplied through an environment variable.
+func closeAuditTestDatabaseHandles(t *testing.T, databases ...*gorm.DB) {
+	t.Helper()
+	seen := make(map[*sql.DB]struct{}, len(databases))
+	for _, database := range databases {
+		if database == nil {
+			continue
+		}
+		connection, err := database.DB()
+		if err != nil {
+			t.Errorf("open audit test database handle: %v", err)
+			continue
+		}
+		if _, ok := seen[connection]; ok {
+			continue
+		}
+		seen[connection] = struct{}{}
+		if err := connection.Close(); err != nil {
+			t.Errorf("close audit test database handle: %v", err)
+		}
+	}
+}
+
 func newAuditTestDatabase(t *testing.T, kind, dsn string) (*gorm.DB, string) {
 	t.Helper()
 	if kind == "sqlite" {
 		path := t.TempDir() + "/audit.db"
 		db, err := gorm.Open(sqlite.Open(path), &gorm.Config{})
 		require.NoError(t, err)
+		t.Cleanup(func() { closeAuditTestDatabaseHandles(t, db) })
 		return db, path
 	}
 	require.NotEmpty(t, dsn)
@@ -566,7 +590,7 @@ func verifyAuditJSONStorage(t *testing.T) {
 		}
 	}
 	require.NoError(t, common.Unmarshal(stored, &details))
-	assert.EqualValues(t, 9007199254740993, details.Op.Params.LargeId, "JSON numbers must retain their type and precision")
+	assert.EqualValues(t, uint64(9007199254740993), details.Op.Params.LargeId, "JSON numbers must retain their type and precision")
 	for _, role := range []int{common.RoleCommonUser, common.RoleAdminUser} {
 		entries, _, err = model.GetAuditLogs(filter, 0, 20, role)
 		require.NoError(t, err)
@@ -658,6 +682,9 @@ func TestAuditDatabaseMatrix(t *testing.T) {
 			for _, upgrade := range []bool{false, true} {
 				t.Run(fmt.Sprintf("upgrade=%v", upgrade), func(t *testing.T) {
 					db, isolatedDSN := newAuditTestDatabase(t, tc.name, dsn)
+					t.Cleanup(func() {
+						closeAuditTestDatabaseHandles(t, model.DB, model.LOG_DB, db)
+					})
 					t.Setenv("LOG_SQL_DSN", "")
 					if tc.name == "sqlite" {
 						common.SQLitePath = isolatedDSN
@@ -680,7 +707,10 @@ func TestAuditDatabaseMatrix(t *testing.T) {
 						require.NoError(t, db.Create(&releasedAuditUser{Username: "released-owner", Password: "placeholder", AccessToken: &legacy, AffCode: "released-aff", Quota: 1234}).Error)
 						require.NoError(t, db.Create(&releasedAuditLog{UserId: 1, Type: model.LogTypeLogin, Content: "historical login", CreatedAt: 100, RequestId: "legacy-request"}).Error)
 					}
-					for range 2 {
+					for iteration := 0; iteration < 2; iteration++ {
+						if iteration > 0 {
+							closeAuditTestDatabaseHandles(t, model.DB, model.LOG_DB)
+						}
 						require.NoError(t, model.InitDB())
 						require.NoError(t, model.InitLogDB())
 					}
@@ -698,7 +728,7 @@ func TestAuditDatabaseMatrix(t *testing.T) {
 						require.NotNil(t, legacyUser)
 						var user model.User
 						require.NoError(t, db.First(&user, 1).Error)
-						assert.Equal(t, 1234, user.Quota)
+						assert.Equal(t, int64(1234), user.Quota)
 						var old model.Log
 						require.NoError(t, db.First(&old).Error)
 						assert.Equal(t, "historical login", old.Content)

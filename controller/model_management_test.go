@@ -33,6 +33,13 @@ import (
 func modelManagementDB(t *testing.T, kind, dsn string) *gorm.DB {
 	t.Helper()
 	database, isolatedDSN := newAuditTestDatabase(t, kind, dsn)
+	// The bootstrap handle is only needed to create the isolated database. Close
+	// it before InitDB opens the same SQLite file through the process globals;
+	// Windows otherwise keeps audit.db locked during TempDir cleanup.
+	bootstrapConnection, err := database.DB()
+	if err == nil {
+		require.NoError(t, bootstrapConnection.Close())
+	}
 	previousDB, previousLogDB := model.DB, model.LOG_DB
 	previousMain, previousLog := common.MainDatabaseType(), common.LogDatabaseType()
 	previousMaster, previousSQLite := common.IsMasterNode, common.SQLitePath

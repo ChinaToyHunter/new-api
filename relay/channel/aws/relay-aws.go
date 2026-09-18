@@ -7,7 +7,6 @@ import (
 	"io"
 	"net/http"
 	"strings"
-	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/relay/channel"
@@ -44,7 +43,7 @@ func newAwsInvokeContext(parent context.Context) (context.Context, context.Cance
 	if common.RelayTimeout <= 0 {
 		return context.WithCancel(parent)
 	}
-	return context.WithTimeout(parent, time.Duration(common.RelayTimeout)*time.Second)
+	return context.WithTimeout(parent, common.TimeoutDuration(common.RelayTimeout))
 }
 
 func newAwsInvokeError(requestContext context.Context, err error, operation string) *types.NewAPIError {

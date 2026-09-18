@@ -201,7 +201,7 @@ func TestModelPriceHelperTieredRejectsPreConsumeOverflow(t *testing.T) {
 
 	require.NoError(t, config.GlobalConfig.LoadFromDB(map[string]string{
 		"billing_setting.billing_mode":    `{"tiered-overflow-model":"tiered_expr"}`,
-		"billing_setting.billing_expr":    `{"tiered-overflow-model":"tier(\"overflow\", p * 100000000000000000)"}`,
+		"billing_setting.billing_expr":    `{"tiered-overflow-model":"tier(\"overflow\", p * 1e17)"}`,
 		"group_ratio_setting.group_ratio": `{"default":1}`,
 	}))
 

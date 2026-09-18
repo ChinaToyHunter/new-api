@@ -426,7 +426,7 @@ func assertResponsesWSAccounting(t *testing.T, fixture *responsesWSBillingTest, 
 	require.NoError(t, model.DB.First(fixture.user, fixture.user.Id).Error)
 	assert.Equal(t, 3000-charged, fixture.token.RemainQuota)
 	assert.Equal(t, charged, fixture.token.UsedQuota)
-	assert.Equal(t, 100000-charged, fixture.user.Quota)
+	assert.Equal(t, int64(100000-charged), fixture.user.Quota)
 	assert.Equal(t, charged, fixture.user.UsedQuota)
 }
 
@@ -521,7 +521,7 @@ func TestResponsesWebSocketReusesConnectionAndSettlesEachRequest(t *testing.T) {
 	require.NoError(t, model.DB.First(user, user.Id).Error)
 	assert.Zero(t, token.RemainQuota)
 	assert.Equal(t, 3000, token.UsedQuota)
-	assert.Equal(t, 97000, user.Quota)
+	assert.Equal(t, int64(97000), user.Quota)
 	assert.Equal(t, 3000, user.UsedQuota)
 }
 

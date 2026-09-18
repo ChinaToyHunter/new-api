@@ -35,6 +35,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
+import { SystemUpdateAction } from '@/features/system-update/system-update-action'
 import { formatTimestamp, formatTimestampToDate } from '@/lib/format'
 
 import {
@@ -351,6 +352,8 @@ export function UpdateCheckerSection({
               <div className='text-lg font-semibold'>{uptime}</div>
             </div>
           </div>
+
+          <SystemUpdateAction compact={false} />
 
           <div className='flex flex-wrap items-center gap-3'>
             <Button onClick={handleCheckUpdates} disabled={checking || pulling}>

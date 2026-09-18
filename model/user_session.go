@@ -288,7 +288,11 @@ func writeUserSessionCache(entry *userSessionCacheEntry, cacheDeadline time.Time
 	now := time.Now()
 	sessionExpiresAt := time.Unix(entry.ExpiresAt, 0)
 	sessionTTL := sessionExpiresAt.Sub(now)
-	var redisExpiration int64
+	var (
+		redisExpirationSeconds int64
+		redisExpirationMillis  int64
+		redisExpirationTTL     int64
+	)
 	if entry.Status == UserSessionStatusActive {
 		if cacheDeadline.IsZero() {
 			return ErrUserSessionInvalid
@@ -307,15 +311,23 @@ func writeUserSessionCache(entry *userSessionCacheEntry, cacheDeadline time.Time
 		if cacheExpiresAt.Sub(now) < time.Millisecond {
 			return errUserSessionCacheObservationStale
 		}
-		redisExpiration = cacheExpiresAt.UnixMilli()
+		// Leave a one-millisecond margin so Redis' clock and the caller's
+		// observation cannot make the cache outlive the Session.
+		expirationMillis := cacheExpiresAt.UnixMilli() - 1
+		redisExpirationSeconds = expirationMillis / 1000
+		redisExpirationMillis = expirationMillis % 1000
+		if redisExpirationMillis < 0 {
+			redisExpirationSeconds--
+			redisExpirationMillis += 1000
+		}
 	} else {
 		ttl := min(sessionTTL, time.Duration(userCacheTTLSeconds())*time.Second)
 		if ttl <= 0 {
 			ttl = time.Second
 		}
-		redisExpiration = ttl.Milliseconds()
-		if redisExpiration <= 0 {
-			redisExpiration = 1
+		redisExpirationTTL = ttl.Milliseconds()
+		if redisExpirationTTL <= 0 {
+			redisExpirationTTL = 1
 		}
 	}
 	entry.CacheSchema = userSessionCacheSchema
@@ -335,15 +347,27 @@ redis.call('HSET', KEYS[1],
   'CreatedAt', ARGV[9], 'LastActiveAt', ARGV[10], 'ExpiresAt', ARGV[11],
   'RevokedAt', ARGV[12], 'RevokedReason', ARGV[13], 'CacheSchema', ARGV[14])
 if ARGV[5] == 'active' then
-  redis.call('PEXPIREAT', KEYS[1], ARGV[15])
+  local expiration_seconds = tonumber(ARGV[15])
+  local expiration_millis = tonumber(ARGV[16])
+  local redis_time = redis.call('TIME')
+  local now_seconds = tonumber(redis_time[1])
+  local now_millis = math.floor(tonumber(redis_time[2]) / 1000)
+  local remaining_milliseconds =
+    (expiration_seconds - now_seconds) * 1000 + expiration_millis - now_millis
+  if remaining_milliseconds <= 0 then
+    redis.call('DEL', KEYS[1])
+    return 1
+  end
+  redis.call('PEXPIRE', KEYS[1], remaining_milliseconds)
 else
-  redis.call('PEXPIRE', KEYS[1], ARGV[15])
+  redis.call('PEXPIRE', KEYS[1], ARGV[17])
 end
 return 1`
 	result, err := common.RDB.Eval(context.Background(), script, []string{userSessionCacheKey(entry.SID)},
 		entry.SID, entry.UserID, entry.Version, entry.UserAuthVersion, entry.Status,
 		entry.LoginMethod, entry.IP, entry.UserAgent, entry.CreatedAt, entry.LastActiveAt,
-		entry.ExpiresAt, entry.RevokedAt, entry.RevokedReason, entry.CacheSchema, redisExpiration,
+		entry.ExpiresAt, entry.RevokedAt, entry.RevokedReason, entry.CacheSchema,
+		redisExpirationSeconds, redisExpirationMillis, redisExpirationTTL,
 	).Int()
 	if err != nil {
 		return err

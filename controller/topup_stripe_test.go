@@ -143,7 +143,7 @@ func TestStripeTokensMinimumProducesValidQuote(t *testing.T) {
 
 	creditedQuota, err := validateCreditedQuota(getStripeCreditedQuota(amount, "default"))
 	require.NoError(t, err)
-	assert.Equal(t, 500000, creditedQuota)
+	assert.Equal(t, int64(500000), creditedQuota)
 
 	quote, ok := getStripeWalletQuote(amount, "default")
 	require.True(t, ok)

@@ -995,6 +995,8 @@ type TaskSubmitReq struct {
 	Seconds        string         `json:"seconds,omitempty"`
 	InputReference string         `json:"input_reference,omitempty"`
 	Metadata       map[string]any `json:"metadata,omitempty"`
+
+	durationInvalid bool
 }
 
 func (t *TaskSubmitReq) GetPrompt() string {
@@ -1006,6 +1008,7 @@ func (t *TaskSubmitReq) HasImage() bool {
 }
 
 func (t *TaskSubmitReq) UnmarshalJSON(data []byte) error {
+	t.durationInvalid = false
 	type Alias TaskSubmitReq
 	aux := &struct {
 		Metadata json.RawMessage `json:"metadata,omitempty"`
@@ -1028,7 +1031,11 @@ func (t *TaskSubmitReq) UnmarshalJSON(data []byte) error {
 			if err := common.Unmarshal(aux.Duration, &durationStr); err == nil && durationStr != "" {
 				if v, err := strconv.Atoi(durationStr); err == nil {
 					t.Duration = v
+				} else {
+					t.durationInvalid = true
 				}
+			} else {
+				t.durationInvalid = true
 			}
 		}
 	}

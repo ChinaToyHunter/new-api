@@ -123,6 +123,51 @@ func GetAndValidateEmbeddingRequest(c *gin.Context, relayMode int) (*dto.Embeddi
 // overflow the conversion and corrupt billing.
 const maxTokensLimit = math.MaxInt32 / 2
 
+// normalizeBoundedDecodeError turns architecture-dependent integer decoding
+// failures into the stable validation errors used by bounded request fields.
+func normalizeBoundedDecodeError(err error, fieldMessage func(string) string) error {
+	if err == nil {
+		return nil
+	}
+	var typeErr *json.UnmarshalTypeError
+	if !errors.As(err, &typeErr) {
+		return err
+	}
+	message := fieldMessage(typeErr.Field)
+	if message == "" {
+		return err
+	}
+	return errors.New(message)
+}
+
+func normalizeMaxTokenDecodeError(err error) error {
+	return normalizeBoundedDecodeError(err, func(field string) string {
+		switch {
+		case strings.HasSuffix(field, "max_output_tokens"):
+			return "max_output_tokens is invalid"
+		case strings.HasSuffix(field, "maxOutputTokens"):
+			return "maxOutputTokens is invalid"
+		case strings.HasSuffix(field, "max_tokens"),
+			strings.HasSuffix(field, "max_completion_tokens"),
+			strings.HasSuffix(field, "max_tokens_to_sample"):
+			return "max_tokens is invalid"
+		case strings.HasSuffix(field, "min_tokens"):
+			return "min_tokens is invalid"
+		default:
+			return ""
+		}
+	})
+}
+
+func normalizeImageCountDecodeError(err error) error {
+	return normalizeBoundedDecodeError(err, func(field string) string {
+		if field == "n" || strings.HasSuffix(field, ".n") {
+			return fmt.Sprintf("n must be an integer between 1 and %d", dto.MaxImageN)
+		}
+		return ""
+	})
+}
+
 // ExceedsMaxTokensLimit checks token limits before they reach billing arithmetic.
 func ExceedsMaxTokensLimit(values ...*uint) bool {
 	for _, v := range values {
@@ -137,7 +182,7 @@ func GetAndValidateResponsesRequest(c *gin.Context) (*dto.OpenAIResponsesRequest
 	request := &dto.OpenAIResponsesRequest{}
 	err := common.UnmarshalBodyReusable(c, request)
 	if err != nil {
-		return nil, err
+		return nil, normalizeMaxTokenDecodeError(err)
 	}
 	if request.Model == "" {
 		return nil, errors.New("model is required")
@@ -240,7 +285,7 @@ func GetAndValidOpenAIImageRequest(c *gin.Context, relayMode int) (*dto.ImageReq
 	default:
 		err := common.UnmarshalBodyReusable(c, imageRequest)
 		if err != nil {
-			return nil, err
+			return nil, normalizeImageCountDecodeError(err)
 		}
 
 		if imageRequest.Model == "" {
@@ -293,9 +338,9 @@ func GetAndValidateClaudeRequest(c *gin.Context) (textRequest *dto.ClaudeRequest
 	textRequest = &dto.ClaudeRequest{}
 	err = common.UnmarshalBodyReusable(c, textRequest)
 	if err != nil {
-		return nil, err
+		return nil, normalizeMaxTokenDecodeError(err)
 	}
-	if textRequest.Messages == nil || len(textRequest.Messages) == 0 {
+	if len(textRequest.Messages) == 0 {
 		return nil, errors.New("field messages is required")
 	}
 	if textRequest.Model == "" {
@@ -316,7 +361,7 @@ func GetAndValidateTextRequest(c *gin.Context, relayMode int) (*dto.GeneralOpenA
 	textRequest := &dto.GeneralOpenAIRequest{}
 	err := common.UnmarshalBodyReusable(c, textRequest)
 	if err != nil {
-		return nil, err
+		return nil, normalizeMaxTokenDecodeError(err)
 	}
 
 	if relayMode == relayconstant.RelayModeModerations && textRequest.Model == "" {
@@ -377,7 +422,7 @@ func GetAndValidateGeminiRequest(c *gin.Context) (*dto.GeminiChatRequest, error)
 	request := &dto.GeminiChatRequest{}
 	err := common.UnmarshalBodyReusable(c, request)
 	if err != nil {
-		return nil, err
+		return nil, normalizeMaxTokenDecodeError(err)
 	}
 	if len(request.Contents) == 0 && len(request.Requests) == 0 {
 		return nil, errors.New("contents is required")
