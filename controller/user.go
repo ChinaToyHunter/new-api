@@ -101,8 +101,7 @@ func Login(c *gin.Context) {
 		return
 	}
 
-	// 检查是否启用2FA
-	setupLogin(&user, c)
+	setupLogin(&user, nil, c)
 }
 
 // loginMethodFromContext 根据请求路径推导登录方式，用于登录审计日志。
@@ -159,14 +158,16 @@ func recordLoginAudit(user *model.User, c *gin.Context) {
 	)
 }
 
-// setupLogin creates a server-controlled login Session and returns the shared
-// authentication bundle used by every login method.
-func setupLogin(user *model.User, c *gin.Context) {
+// setupLogin evaluates the shared login policy after primary authentication.
+// Only a completed Passkey ceremony may go directly to session issuance. A
+// pending legacy GitHub binding rewrite travels inside the challenge and is
+// written only when the verification completes.
+func setupLogin(user *model.User, migration *service.LegacyGitHubMigration, c *gin.Context) {
 	if user == nil || user.Id <= 0 || user.Status != common.UserStatusEnabled {
 		common.ApiErrorI18n(c, i18n.MsgAuthUserBanned)
 		return
 	}
-	challenge, err := service.StartLoginVerification(user, loginMethodFromContext(c))
+	challenge, err := service.StartLoginVerification(user, loginMethodFromContext(c), migration)
 	if err != nil {
 		if errors.Is(err, service.ErrVerificationUnavailable) {
 			writeSecurityOperationError(c, err)
