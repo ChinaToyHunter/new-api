@@ -50,6 +50,7 @@ type LegacyComboboxProps = {
   allowCustomValue?: boolean
   showSelectedIcon?: boolean
   className?: string
+  dropdownClassName?: string
   id?: string
   openOnFocus?: boolean
   disabled?: boolean
@@ -87,6 +88,7 @@ function Combobox(
         placeholder={props.searchPlaceholder ?? props.placeholder}
         emptyText={props.emptyText}
         className={props.className}
+        dropdownClassName={props.dropdownClassName}
         allowCustomValue={props.allowCustomValue}
         openOnFocus={props.openOnFocus}
       />

@@ -87,7 +87,7 @@ async function renderLogs(props: {
       url.startsWith('/api/log/self?')
     ) {
       data = { items: records, total: records.length }
-    } else if (url === '/api/group/') {
+    } else if (url === '/api/route-groups/') {
       data = []
     } else if (url === '/api/user/self/groups') {
       data = {}
