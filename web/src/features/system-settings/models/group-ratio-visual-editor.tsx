@@ -762,7 +762,7 @@ function AccountGroupsTable(props: AccountGroupsTableProps) {
                 <Input
                   type='number'
                   min={0}
-                  step={0.1}
+                  step={0.0001}
                   value={row.topupRatio}
                   placeholder={t('Not set')}
                   onChange={(event) =>
@@ -923,7 +923,7 @@ function RouteGroupsTable(props: RouteGroupsTableProps) {
                 <Input
                   type='number'
                   min={0}
-                  step={0.1}
+                  step={0.0001}
                   value={row.ratio}
                   onChange={(event) =>
                     props.onUpdate(row._id, 'ratio', event.target.value)
@@ -1172,7 +1172,7 @@ function GroupOverrideRules(props: GroupOverrideRulesProps) {
                       <Input
                         type='number'
                         min={0}
-                        step={0.1}
+                        step={0.0001}
                         value={row.ratio}
                         onChange={(event) =>
                           updateRow(row._id, 'ratio', event.target.value)

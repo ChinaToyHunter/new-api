@@ -39,10 +39,7 @@ interface ComboboxInputProps {
   placeholder?: string
   emptyText?: string
   className?: string
-  // The dropdown is portaled out of the field's subtree, so styles that a
-  // caller relies on inheriting (e.g. masking sensitive values) have to be
-  // applied to the dropdown itself.
-  dropdownClassName?: string
+  popupClassName?: string
   id?: string
   allowCustomValue?: boolean
   openOnFocus?: boolean
@@ -60,7 +57,7 @@ export function ComboboxInput({
   placeholder = 'Select or type...',
   emptyText = 'No option found.',
   className,
-  dropdownClassName,
+  popupClassName,
   id,
   allowCustomValue = false,
   openOnFocus = true,
@@ -300,7 +297,7 @@ export function ComboboxInput({
             }}
             className={cn(
               'bg-popover text-popover-foreground z-100 rounded-md border shadow-md',
-              dropdownClassName
+              popupClassName
             )}
           >
             {filteredOptions.length > 0 ? (
