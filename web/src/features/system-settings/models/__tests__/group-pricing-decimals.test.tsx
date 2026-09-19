@@ -23,15 +23,24 @@ import { assert, expect, test } from 'vitest'
 
 import { GroupRatioVisualEditor } from '../group-ratio-visual-editor'
 
+// This fork edits GroupRatio in the route-group table and TopupGroupRatio in the
+// account-group table, so each case targets a row of its own table.
+const ROUTE_ROW = 'route-decimals'
+const ACCOUNT_ROW = 'account-decimals'
+
 function PricingFixture() {
   const [settings, setSettings] = useState<Record<string, string>>({
-    GroupRatio: '{"default":1}',
+    AccountGroups: `{"${ACCOUNT_ROW}":""}`,
+    DefaultUserGroup: '',
+    GroupRatio: `{"${ROUTE_ROW}":1}`,
     TopupGroupRatio: '{}',
     UserUsableGroups: '{}',
   })
   return (
     <>
       <GroupRatioVisualEditor
+        accountGroups={settings.AccountGroups}
+        defaultUserGroup={settings.DefaultUserGroup}
         groupRatio={settings.GroupRatio}
         topupGroupRatio={settings.TopupGroupRatio}
         userUsableGroups={settings.UserUsableGroups}
@@ -39,6 +48,7 @@ function PricingFixture() {
         autoGroups='[]'
         maxTokenAutoGroupsField={null}
         groupSpecialUsableGroup='{}'
+        defaultUseAutoGroup={false}
         onChange={(field, value) =>
           setSettings((current) => ({ ...current, [field]: value }))
         }
@@ -49,18 +59,23 @@ function PricingFixture() {
 }
 
 test.each([
-  ['GroupRatio', 0],
-  ['TopupGroupRatio', 1],
+  ['GroupRatio', 'Base ratio', ROUTE_ROW],
+  ['TopupGroupRatio', 'Top-up ratio', ACCOUNT_ROW],
 ] as const)(
   '%s preserves typed decimals and accepts them as valid numeric ratios',
-  async (key, index) => {
+  async (key, columnHeader, rowName) => {
     const user = userEvent.setup()
     render(<PricingFixture />)
-    const row = screen.getByDisplayValue('default').closest('tr')
+    const table = screen.getByText(columnHeader).closest('table')
+    assert(table)
+    const row = within(table)
+      .getAllByRole('row')
+      .find(
+        (candidate) =>
+          within(candidate).queryAllByDisplayValue(rowName).length > 0
+      )
     assert(row)
-    const input = within(row).getAllByRole('spinbutton')[
-      index
-    ] as HTMLInputElement
+    const input = within(row).getAllByRole('spinbutton')[0] as HTMLInputElement
     fireEvent.change(input, { target: { value: '0.0' } })
     expect(input.value).toBe('0.0')
     await user.clear(input)
@@ -71,7 +86,7 @@ test.each([
     const saved = JSON.parse(
       screen.getByRole('status', { name: 'Saved ratios' }).textContent ?? '{}'
     )
-    expect(JSON.parse(saved[key])).toEqual({ default: 0.04 })
+    expect(JSON.parse(saved[key])).toEqual({ [rowName]: 0.04 })
     await user.clear(input)
     await user.type(input, '0.0001')
     expect(input).toHaveValue(0.0001)
