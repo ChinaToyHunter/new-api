@@ -845,3 +845,37 @@ func TestSecurityAccountUnbindPreservesUsableLoginMethod(t *testing.T) {
 		})
 	}
 }
+
+// WeChat binding is an account-linking flow, so the server must require a fresh
+// proof before it can change the account. Asserting only that no binding was
+// written would not catch a dropped gate, because the upstream code exchange
+// fails offline anyway; the rejection code is what distinguishes an enforced
+// gate from a flow that merely looks safe.
+func TestSecurityAccountWeChatBindingRequiresProof(t *testing.T) {
+	user, identity := setupSecurityEnrollmentTest(t)
+	previousWeChatAuthEnabled := common.WeChatAuthEnabled
+	common.WeChatAuthEnabled = true
+	t.Cleanup(func() { common.WeChatAuthEnabled = previousWeChatAuthEnabled })
+
+	bindingContext, err := common.Marshal(service.AccountBindingContext{Provider: "wechat", Code: "wechat-binding-code"})
+	require.NoError(t, err)
+
+	for _, test := range []struct {
+		name    string
+		proof   string
+		rejects bool
+	}{
+		{"missing proof", "", true},
+		{"wrong scope", issueSecurityEnrollmentProof(t, identity, service.VerificationOperation{Scope: service.VerificationScopeAccountDelete}, service.VerificationMethodPassword), true},
+		{"valid proof", issueSecurityEnrollmentProof(t, identity, service.VerificationOperation{Scope: service.VerificationScopeAccountBind, Context: bindingContext}, service.VerificationMethodPassword), false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			response := securityEnrollmentRequest(http.MethodPost, "/api/oauth/wechat/bind", `{"code":"wechat-binding-code"}`, test.proof, identity, WeChatBind)
+			assert.Equal(t, test.rejects, strings.Contains(response.Body.String(), "SECURITY_PROOF_"), response.Body.String())
+
+			current, err := model.GetUserById(user.Id, false)
+			require.NoError(t, err)
+			assert.Empty(t, current.WeChatId)
+		})
+	}
+}
