@@ -2,6 +2,7 @@ package model
 
 import (
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
@@ -397,4 +398,51 @@ func TestResetUserPasswordByEmailRequiresSingleActiveMatch(t *testing.T) {
 
 	err = ResetUserPasswordByEmail("missing@example.com", "NewPassword123")
 	require.True(t, errors.Is(err, ErrEmailNotFound))
+}
+
+// An account password is credential material, so every write path must store
+// the Argon2id account hash instead of a legacy format. This guards the
+// registration, administrator edit, and reset paths, which do not run through
+// the self-service ChangeUserPassword helper.
+func TestAccountPasswordWritePathsStoreArgon2idHashes(t *testing.T) {
+	setupUserUpdateTestState(t)
+
+	registered := User{
+		Username: "argon2-registration",
+		Password: "RegistrationPass1",
+		AffCode:  "argon2-reg",
+		Role:     common.RoleCommonUser,
+		Status:   common.UserStatusEnabled,
+	}
+	require.NoError(t, registered.Insert(0))
+
+	edited := createUserBindTestUser(t)
+	edited.Password = "EditedPass1"
+	require.NoError(t, edited.EditWithTx(DB, true))
+
+	require.NoError(t, DB.Create(&User{
+		Username: "argon2-reset",
+		Password: "placeholder",
+		Email:    "argon2-reset@example.com",
+		AffCode:  "argon2-rst",
+		Status:   common.UserStatusEnabled,
+	}).Error)
+	require.NoError(t, ResetUserPasswordByEmail("argon2-reset@example.com", "ResetPass1"))
+
+	for _, test := range []struct {
+		name     string
+		username string
+		password string
+	}{
+		{"insert", registered.Username, "RegistrationPass1"},
+		{"edit", edited.Username, "EditedPass1"},
+		{"reset", "argon2-reset", "ResetPass1"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var stored User
+			require.NoError(t, DB.Where("username = ?", test.username).First(&stored).Error)
+			assert.True(t, strings.HasPrefix(stored.Password, "$argon2id$"), "stored hash is not Argon2id")
+			assert.True(t, common.ValidatePasswordAndHash(test.password, stored.Password))
+		})
+	}
 }
