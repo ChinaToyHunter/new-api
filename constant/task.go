@@ -4,7 +4,7 @@ type TaskPlatform string
 
 const (
 	TaskPlatformSuno       TaskPlatform = "suno"
-	TaskPlatformMidjourney              = "mj"
+	TaskPlatformMidjourney TaskPlatform = "mj"
 )
 
 const (
@@ -27,9 +27,9 @@ var legacyTaskActionAliases = map[string]string{
 // When disabled, factory and override plugins both stop serving.
 var TaskPluginEnabled = true
 
-// TaskPluginOverrideEnabled controls whether the database override layer is
-// active. When disabled, uploaded plugins are ignored and factory plugins are
-// used instead; the factory layer is unaffected.
+// TaskPluginOverrideEnabled controls whether database-backed override plugins
+// participate in runtime routing. Desired overrides remain stored while this
+// layer is disabled so re-enabling it can restore them.
 var TaskPluginOverrideEnabled = true
 
 // NormalizeTaskAction maps persisted legacy action names to the canonical task

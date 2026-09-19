@@ -35,6 +35,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
+import { SystemUpdateAction } from '@/features/system-update/system-update-action'
 import { formatTimestamp, formatTimestampToDate } from '@/lib/format'
 
 import {
@@ -100,11 +101,12 @@ export function UpdateCheckerSection({
       if (!body.success) {
         throw new Error(body.message || t('Failed to load available versions.'))
       }
-      setReleases(body.data || [])
+      const availableReleases = body.data || []
+      setReleases(availableReleases)
       setSelectedVersion((current) =>
-        current && body.data.some((item) => item.tag_name === current)
+        current && availableReleases.some((item) => item.tag_name === current)
           ? current
-          : body.data[0]?.tag_name || null
+          : availableReleases[0]?.tag_name || null
       )
     } catch {
       setReleases([])
@@ -171,9 +173,7 @@ export function UpdateCheckerSection({
       }
     } catch (error) {
       const message =
-        error instanceof Error
-          ? error.message
-          : t('Failed to check for updates')
+        error instanceof Error ? error.message : t('Failed to check for updates')
       toast.error(message)
     } finally {
       setChecking(false)
@@ -244,9 +244,7 @@ export function UpdateCheckerSection({
       setConfirmOpen(true)
     } catch (error) {
       const message =
-        error instanceof Error
-          ? error.message
-          : t('Failed to check for updates')
+        error instanceof Error ? error.message : t('Failed to check for updates')
       toast.error(message)
     } finally {
       setChecking(false)
@@ -308,8 +306,7 @@ export function UpdateCheckerSection({
         toast.error(t('Service did not come back in time. Refresh manually.'))
       }
     } catch (error) {
-      const message =
-        error instanceof Error ? error.message : t('Update failed')
+      const message = error instanceof Error ? error.message : t('Update failed')
       toast.error(message)
     } finally {
       setPulling(false)
@@ -346,7 +343,7 @@ export function UpdateCheckerSection({
               <div className='text-muted-foreground text-sm'>
                 {t('Current version')}
               </div>
-              <div className='text-lg font-semibold'>{version}</div>
+              <div className='text-lg font-semibold break-all'>{version}</div>
             </div>
             <div className='rounded-lg border p-4'>
               <div className='text-muted-foreground text-sm'>
@@ -355,6 +352,8 @@ export function UpdateCheckerSection({
               <div className='text-lg font-semibold'>{uptime}</div>
             </div>
           </div>
+
+          <SystemUpdateAction compact={false} />
 
           <div className='flex flex-wrap items-center gap-3'>
             <Button onClick={handleCheckUpdates} disabled={checking || pulling}>
@@ -369,7 +368,7 @@ export function UpdateCheckerSection({
             </Button>
             {testModeEnabled && (
               <Select
-                value={selectedVersion}
+                value={selectedVersion ?? undefined}
                 onValueChange={setSelectedVersion}
                 disabled={versionsLoading || pulling || releases.length === 0}
               >
@@ -454,6 +453,7 @@ export function UpdateCheckerSection({
               repo: checkInfo?.update_source || 'ChinaToyHunter/new-api',
             })}
           </p>
+
         </div>
       </SettingsSection>
 

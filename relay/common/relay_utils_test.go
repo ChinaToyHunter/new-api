@@ -1,12 +1,15 @@
 package common
 
 import (
+	"bytes"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"strings"
 	"testing"
 
+	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
@@ -83,7 +86,34 @@ func TestValidateMultipartDirectNormalizesImageField(t *testing.T) {
 func TestTaskDurationBounds(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
-	newContext := func(t *testing.T, body string) (*gin.Context, *RelayInfo) {
+	t.Run("oversized multipart seconds is rejected", func(t *testing.T) {
+		var body bytes.Buffer
+		writer := multipart.NewWriter(&body)
+		require.NoError(t, writer.WriteField("model", "sora-2"))
+		require.NoError(t, writer.WriteField("prompt", "a cat"))
+		require.NoError(t, writer.WriteField("seconds", "9999999999"))
+		require.NoError(t, writer.Close())
+
+		request := httptest.NewRequest(http.MethodPost, "/v1/video/generations", &body)
+		request.Header.Set("Content-Type", writer.FormDataContentType())
+		context, _ := gin.CreateTestContext(httptest.NewRecorder())
+		context.Request = request
+		info := &RelayInfo{TaskRelayInfo: &TaskRelayInfo{}}
+
+		// The distributor middleware primes the reusable body storage for
+		// non-JSON content types before the relay handler reads the request.
+		var modelRequest struct {
+			Model string `json:"model"`
+		}
+		require.NoError(t, common.UnmarshalBodyReusable(context, &modelRequest))
+		require.Equal(t, "sora-2", modelRequest.Model)
+
+		taskErr := ValidateBasicTaskRequest(context, info, constant.TaskActionImageToVideo)
+		require.NotNil(t, taskErr)
+		require.Equal(t, "invalid_seconds", taskErr.Code, taskErr.Message)
+	})
+
+	newContext := func(body string) (*gin.Context, *RelayInfo) {
 		request := httptest.NewRequest(http.MethodPost, "/v1/video/generations", strings.NewReader(body))
 		request.Header.Set("Content-Type", "application/json")
 		context, _ := gin.CreateTestContext(httptest.NewRecorder())
@@ -119,7 +149,7 @@ func TestTaskDurationBounds(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name+" (multipart direct)", func(t *testing.T) {
-			context, info := newContext(t, tt.body)
+			context, info := newContext(tt.body)
 			taskErr := ValidateMultipartDirect(context, info)
 			if tt.wantErr {
 				require.NotNil(t, taskErr)
@@ -129,7 +159,7 @@ func TestTaskDurationBounds(t *testing.T) {
 			}
 		})
 		t.Run(tt.name+" (basic task request)", func(t *testing.T) {
-			context, info := newContext(t, tt.body)
+			context, info := newContext(tt.body)
 			taskErr := ValidateBasicTaskRequest(context, info, constant.TaskActionImageToVideo)
 			if tt.wantErr {
 				require.NotNil(t, taskErr)

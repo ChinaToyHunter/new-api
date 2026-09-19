@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"slices"
@@ -190,6 +191,52 @@ func UpdateOptions(c *gin.Context) {
 	common.ApiSuccess(c, nil)
 }
 
+func UpdatePasskeyDomains(c *gin.Context) {
+	var request struct {
+		RPID                *string `json:"rp_id"`
+		LegacyRPIDs         *string `json:"legacy_rp_ids"`
+		Origins             *string `json:"origins"`
+		Preview             bool    `json:"preview"`
+		RemovalConfirmation string  `json:"removal_confirmation"`
+	}
+	if err := common.DecodeJson(c.Request.Body, &request); err != nil || request.RPID == nil || request.LegacyRPIDs == nil || request.Origins == nil {
+		common.ApiErrorI18n(c, i18n.MsgInvalidParams)
+		return
+	}
+	change, err := model.UpdatePasskeyDomainOptions(map[string]string{
+		"passkey.rp_id": *request.RPID, "passkey.legacy_rp_ids": *request.LegacyRPIDs, "passkey.origins": *request.Origins,
+	}, request.Preview, request.RemovalConfirmation)
+	if err != nil {
+		writePasskeyDomainSettingsError(c, err)
+		if !request.Preview {
+			recordPasskeyDomainAudit(c, change, request.RemovalConfirmation != "", err)
+		}
+		return
+	}
+	if !request.Preview {
+		recordPasskeyDomainAudit(c, change, request.RemovalConfirmation != "", nil)
+	}
+	common.ApiSuccess(c, change)
+}
+
+func writePasskeyDomainSettingsError(c *gin.Context, err error) {
+	var removal *model.PasskeyDomainRemovalError
+	if errors.As(err, &removal) {
+		c.JSON(http.StatusConflict, gin.H{
+			"success": false,
+			"code":    "PASSKEY_RP_ID_REMOVAL_CONFIRMATION_REQUIRED",
+			"message": i18n.T(c, i18n.MsgPasskeyRPIDRemovalConfirmation),
+			"data":    removal.Change,
+		})
+		return
+	}
+	if errors.Is(err, system_setting.ErrPasskeyRPIDInvalid) {
+		writeSecurityOperationError(c, err)
+		return
+	}
+	common.ApiError(c, err)
+}
+
 func UpdateOption(c *gin.Context) {
 	var option OptionUpdateRequest
 	err := common.DecodeJson(c.Request.Body, &option)
@@ -287,10 +334,11 @@ func UpdateOption(c *gin.Context) {
 			return
 		}
 	case "TelegramOAuthEnabled":
-		if option.Value == "true" && common.TelegramBotToken == "" {
+		if option.Value == "true" && !system_setting.GetTelegramSettings().IsConfigured() {
 			c.JSON(http.StatusOK, gin.H{
 				"success": false,
-				"message": "无法启用 Telegram OAuth，请先填入 Telegram Bot Token！",
+				"code":    "TELEGRAM_OAUTH_NOT_CONFIGURED",
+				"message": "Telegram OAuth is not configured or enabled. Please contact your administrator.",
 			})
 			return
 		}
@@ -506,6 +554,17 @@ func UpdateOption(c *gin.Context) {
 			})
 			return
 		}
+	}
+	if model.IsPasskeyDomainOption(option.Key) {
+		change, updateErr := model.UpdatePasskeyDomainOptions(map[string]string{option.Key: option.Value.(string)}, false, "")
+		if updateErr != nil {
+			writePasskeyDomainSettingsError(c, updateErr)
+			recordPasskeyDomainAudit(c, change, false, updateErr)
+			return
+		}
+		recordPasskeyDomainAudit(c, change, false, nil)
+		common.ApiSuccess(c, change)
+		return
 	}
 	err = model.UpdateOption(option.Key, option.Value.(string))
 	if err != nil {

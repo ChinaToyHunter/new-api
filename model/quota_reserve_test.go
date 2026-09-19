@@ -41,11 +41,11 @@ func createReserveTestToken(t *testing.T, remainQuota int) Token {
 	return token
 }
 
-func getUserQuotaFromDB(t *testing.T, id int) int {
+func getUserQuotaFromDB(t *testing.T, id int) int64 {
 	t.Helper()
 	var user User
 	require.NoError(t, DB.Select("quota").First(&user, id).Error)
-	return int(user.Quota)
+	return user.Quota
 }
 
 func getTokenFromDB(t *testing.T, id int) Token {
@@ -59,18 +59,24 @@ func resetBatchUpdateTestState(t *testing.T) {
 	t.Helper()
 	oldBatchEnabled := common.BatchUpdateEnabled
 	common.BatchUpdateEnabled = false
-	for i := 0; i < BatchUpdateTypeCount; i++ {
+	for i := range BatchUpdateTypeCount {
 		batchUpdateLocks[i].Lock()
 		batchUpdateStores[i] = make(map[int]int)
 		batchUpdateLocks[i].Unlock()
 	}
+	batchUpdateLocks[BatchUpdateTypeUserQuota].Lock()
+	batchUpdateWalletStore = make(map[int]int64)
+	batchUpdateLocks[BatchUpdateTypeUserQuota].Unlock()
 	t.Cleanup(func() {
 		common.BatchUpdateEnabled = oldBatchEnabled
-		for i := 0; i < BatchUpdateTypeCount; i++ {
+		for i := range BatchUpdateTypeCount {
 			batchUpdateLocks[i].Lock()
 			batchUpdateStores[i] = make(map[int]int)
 			batchUpdateLocks[i].Unlock()
 		}
+		batchUpdateLocks[BatchUpdateTypeUserQuota].Lock()
+		batchUpdateWalletStore = make(map[int]int64)
+		batchUpdateLocks[BatchUpdateTypeUserQuota].Unlock()
 	})
 }
 
@@ -82,12 +88,12 @@ func TestTryReserveQuotaWithoutRedis(t *testing.T) {
 	reserved, err := TryReserveUserQuota(user.Id, 60)
 	require.NoError(t, err)
 	assert.True(t, reserved)
-	assert.Equal(t, 40, getUserQuotaFromDB(t, user.Id))
+	assert.Equal(t, int64(40), getUserQuotaFromDB(t, user.Id))
 
 	reserved, err = TryReserveUserQuota(user.Id, 41)
 	require.NoError(t, err)
 	assert.False(t, reserved)
-	assert.Equal(t, 40, getUserQuotaFromDB(t, user.Id))
+	assert.Equal(t, int64(40), getUserQuotaFromDB(t, user.Id))
 
 	token := createReserveTestToken(t, 80)
 	reserved, err = TryReserveTokenQuota(token.Id, token.Key, 25, false)
@@ -113,7 +119,7 @@ func TestRedisBatchReserveNeverFallsBackToStaleDatabaseBalance(t *testing.T) {
 	reserved, err := TryReserveUserQuota(user.Id, 8)
 	require.NoError(t, err)
 	assert.True(t, reserved)
-	assert.Equal(t, 10, getUserQuotaFromDB(t, user.Id), "batch delta is not flushed yet")
+	assert.Equal(t, int64(10), getUserQuotaFromDB(t, user.Id), "batch delta is not flushed yet")
 
 	reserved, err = TryReserveUserQuota(user.Id, 3)
 	require.NoError(t, err)
@@ -132,7 +138,7 @@ func TestRedisBatchReserveNeverFallsBackToStaleDatabaseBalance(t *testing.T) {
 	assert.Equal(t, 9, getTokenFromDB(t, token.Id).RemainQuota)
 
 	batchUpdate()
-	assert.Equal(t, 2, getUserQuotaFromDB(t, user.Id))
+	assert.Equal(t, int64(2), getUserQuotaFromDB(t, user.Id))
 	reloadedToken := getTokenFromDB(t, token.Id)
 	assert.Equal(t, 2, reloadedToken.RemainQuota)
 	assert.Equal(t, 7, reloadedToken.UsedQuota)
@@ -148,25 +154,25 @@ func TestBatchUpdateAccumulatesTwoMaximumRequestCharges(t *testing.T) {
 	require.NoError(t, DecreaseUserQuota(user.Id, common.MaxQuota, false))
 
 	batchUpdate()
-	assert.Equal(t, 100, getUserQuotaFromDB(t, user.Id))
+	assert.Equal(t, int64(100), getUserQuotaFromDB(t, user.Id))
 }
 
 func TestBatchUpdateAccumulatorSaturatesOverflow(t *testing.T) {
 	resetBatchUpdateTestState(t)
 
-	addNewRecord(BatchUpdateTypeUserQuota, 1, math.MaxInt)
-	addNewRecord(BatchUpdateTypeUserQuota, 1, 1)
+	addNewWalletRecord(1, math.MaxInt64)
+	addNewWalletRecord(1, 1)
 	batchUpdateLocks[BatchUpdateTypeUserQuota].Lock()
-	assert.Equal(t, math.MaxInt, batchUpdateStores[BatchUpdateTypeUserQuota][1])
+	assert.Equal(t, int64(math.MaxInt64), batchUpdateWalletStore[1])
 	batchUpdateLocks[BatchUpdateTypeUserQuota].Unlock()
 
 	batchUpdateLocks[BatchUpdateTypeUserQuota].Lock()
-	batchUpdateStores[BatchUpdateTypeUserQuota] = make(map[int]int)
+	batchUpdateWalletStore = make(map[int]int64)
 	batchUpdateLocks[BatchUpdateTypeUserQuota].Unlock()
-	addNewRecord(BatchUpdateTypeUserQuota, 1, math.MinInt)
-	addNewRecord(BatchUpdateTypeUserQuota, 1, -1)
+	addNewWalletRecord(1, math.MinInt64)
+	addNewWalletRecord(1, -1)
 	batchUpdateLocks[BatchUpdateTypeUserQuota].Lock()
-	assert.Equal(t, math.MinInt, batchUpdateStores[BatchUpdateTypeUserQuota][1])
+	assert.Equal(t, int64(math.MinInt64), batchUpdateWalletStore[1])
 	batchUpdateLocks[BatchUpdateTypeUserQuota].Unlock()
 }
 
@@ -183,12 +189,12 @@ func TestReserveFallsBackToDatabaseWhenRedisIsUnavailable(t *testing.T) {
 	reserved, err := TryReserveUserQuota(user.Id, 5)
 	require.NoError(t, err)
 	assert.True(t, reserved)
-	assert.Equal(t, 15, getUserQuotaFromDB(t, user.Id))
+	assert.Equal(t, int64(15), getUserQuotaFromDB(t, user.Id))
 
 	reserved, err = TryReserveUserQuota(user.Id, 16)
 	require.NoError(t, err)
 	assert.False(t, reserved)
-	assert.Equal(t, 15, getUserQuotaFromDB(t, user.Id))
+	assert.Equal(t, int64(15), getUserQuotaFromDB(t, user.Id))
 }
 
 func TestSynchronousReserveCompensatesCacheWhenPersistenceFails(t *testing.T) {

@@ -17,6 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { api } from '@/lib/api'
+import { requireServerSuccess } from '@/lib/server-error-message'
 
 import { API_ENDPOINTS } from './constants'
 import type {
@@ -75,6 +76,7 @@ export async function getUserModels(
     params: endpointType ? { group, endpoint_type: endpointType } : { group },
   })
   const { data } = res
+  requireServerSuccess(data)
 
   if (!data.success || !Array.isArray(data.data)) {
     return []
@@ -92,6 +94,7 @@ export async function getUserModels(
 export async function getUserRouteGroups(): Promise<GroupOption[]> {
   const res = await api.get(API_ENDPOINTS.USER_ROUTE_GROUPS)
   const { data } = res
+  requireServerSuccess(data)
 
   if (!data.success || !data.data) {
     return []

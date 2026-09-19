@@ -43,7 +43,7 @@ func (w *WalletFunding) PreConsume(amount int) error {
 	if amount <= 0 {
 		return nil
 	}
-	reserved, err := model.TryReserveUserQuota(w.userId, amount)
+	reserved, err := model.TryReserveUserQuota(w.userId, int64(amount))
 	if err != nil {
 		return err
 	}
@@ -59,9 +59,9 @@ func (w *WalletFunding) Settle(delta int) error {
 		return nil
 	}
 	if delta > 0 {
-		return model.DecreaseUserQuota(w.userId, delta, false)
+		return model.DecreaseUserQuota(w.userId, int64(delta), false)
 	}
-	return model.IncreaseUserQuota(w.userId, -delta, false)
+	return model.IncreaseUserQuota(w.userId, int64(-delta), false)
 }
 
 func (w *WalletFunding) Refund() error {
@@ -70,7 +70,7 @@ func (w *WalletFunding) Refund() error {
 	}
 	// IncreaseUserQuota 是 quota += N 的非幂等操作，不能重试，否则会多退额度。
 	// 订阅的 RefundSubscriptionPreConsume 有 requestId 幂等保护所以可以重试。
-	return model.IncreaseUserQuota(w.userId, w.consumed, false)
+	return model.IncreaseUserQuota(w.userId, int64(w.consumed), false)
 }
 
 // ---------------------------------------------------------------------------
@@ -135,7 +135,7 @@ func refundWithRetry(fn func() error) error {
 	}
 	const maxAttempts = 3
 	var lastErr error
-	for i := 0; i < maxAttempts; i++ {
+	for i := range maxAttempts {
 		if err := fn(); err == nil {
 			return nil
 		} else {

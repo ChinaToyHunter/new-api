@@ -111,7 +111,7 @@ func GetTopUpInfo(c *gin.Context) {
 		"enable_redemption":                complianceConfirmed,
 		"payment_compliance_confirmed":     complianceConfirmed,
 		"payment_compliance_terms_version": operation_setting.CurrentComplianceTermsVersion,
-		"waffo_pay_methods": func() interface{} {
+		"waffo_pay_methods": func() any {
 			if enableWaffo {
 				return setting.GetWaffoPayMethods()
 			}
@@ -193,7 +193,7 @@ func getPayMoney(amount int64, group string) (float64, bool) {
 }
 
 func getMinTopup() int64 {
-	minTopup := operation_setting.MinTopUp
+	minTopup := int64(operation_setting.MinTopUp)
 	if operation_setting.GetQuotaDisplayType() == operation_setting.QuotaDisplayTypeTokens {
 		dMinTopup := decimal.NewFromInt(int64(minTopup))
 		dQuotaPerUnit := decimal.NewFromFloat(common.QuotaPerUnit)
@@ -206,7 +206,7 @@ func getMinTopup() int64 {
 	return int64(minTopup)
 }
 
-func getTopUpQuota(amount int64) (int, error) {
+func getTopUpQuota(amount int64) (int64, error) {
 	quota := decimal.NewFromInt(amount)
 	if operation_setting.GetQuotaDisplayType() == operation_setting.QuotaDisplayTypeTokens {
 		quotaPerUnit := decimal.NewFromFloat(common.QuotaPerUnit)
@@ -235,7 +235,7 @@ func getMaxTopUpAmount() int64 {
 	return maxStoredAmount.IntPart()
 }
 
-func validateCreditedQuota(quota decimal.Decimal) (int, error) {
+func validateCreditedQuota(quota decimal.Decimal) (int64, error) {
 	value, err := common.WalletQuotaFromDecimalStrict(quota)
 	if err != nil {
 		return 0, errors.New("充值额度超出系统可表示范围")
@@ -246,7 +246,7 @@ func validateCreditedQuota(quota decimal.Decimal) (int, error) {
 	return value, nil
 }
 
-func validateTopUpQuota(amount int64) (int, error) {
+func validateTopUpQuota(amount int64) (int64, error) {
 	quota, err := getTopUpQuota(amount)
 	if err == nil && quota > 0 {
 		return quota, nil

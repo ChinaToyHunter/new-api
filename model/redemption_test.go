@@ -100,7 +100,7 @@ func TestSearchRedemptionsFiltersAndPaginates(t *testing.T) {
 	}
 }
 
-func setupRedeemFixture(t *testing.T, quota int) (userId int, key string) {
+func setupRedeemFixture(t *testing.T, quota int64) (userId int, key string) {
 	t.Helper()
 	require.NoError(t, DB.AutoMigrate(&Redemption{}))
 	require.NoError(t, DB.Session(&gorm.Session{AllowGlobalUpdate: true}).Unscoped().Delete(&Redemption{}).Error)
@@ -130,7 +130,7 @@ func TestRedeemCreditsQuotaExactlyOnce(t *testing.T) {
 
 	quota, err := Redeem(key, userId)
 	require.NoError(t, err)
-	assert.Equal(t, 500, quota)
+	assert.Equal(t, int64(500), quota)
 
 	var user User
 	require.NoError(t, DB.First(&user, "id = ?", userId).Error)
@@ -186,7 +186,7 @@ func TestRedeemConcurrentSingleSuccess(t *testing.T) {
 	successes := make([]bool, goroutines)
 	var wg sync.WaitGroup
 	wg.Add(goroutines)
-	for i := 0; i < goroutines; i++ {
+	for i := range goroutines {
 		go func(idx int) {
 			defer wg.Done()
 			if _, err := Redeem(key, userId); err == nil {

@@ -64,21 +64,21 @@ func TestQuotaFromFloatChecked(t *testing.T) {
 	if assert.NotNil(t, clamp) {
 		assert.Equal(t, "QuotaFromFloat", clamp.Op)
 		assert.Equal(t, QuotaClampOverflow, clamp.Kind)
-		assert.Equal(t, MaxQuota, clamp.Clamped)
+		assert.Equal(t, int64(MaxQuota), clamp.Clamped)
 	}
 
 	quota, clamp = QuotaFromFloatChecked(-overflowingProduct)
 	assert.Equal(t, MinQuota, quota)
 	if assert.NotNil(t, clamp) {
 		assert.Equal(t, QuotaClampUnderflow, clamp.Kind)
-		assert.Equal(t, MinQuota, clamp.Clamped)
+		assert.Equal(t, int64(MinQuota), clamp.Clamped)
 	}
 
 	quota, clamp = QuotaFromFloatChecked(math.NaN())
 	assert.Equal(t, 0, quota)
 	if assert.NotNil(t, clamp) {
 		assert.Equal(t, QuotaClampNaN, clamp.Kind)
-		assert.Equal(t, 0, clamp.Clamped)
+		assert.Equal(t, int64(0), clamp.Clamped)
 	}
 }
 
@@ -92,7 +92,7 @@ func TestQuotaFromFloatStrictReturnsTypedClampError(t *testing.T) {
 	var clamp *QuotaClamp
 	require.ErrorAs(t, err, &clamp)
 	assert.Equal(t, QuotaClampOverflow, clamp.Kind)
-	assert.Equal(t, MaxQuota, clamp.Clamped)
+	assert.Equal(t, int64(MaxQuota), clamp.Clamped)
 	assert.ErrorContains(t, err, "QuotaFromFloat")
 	assert.ErrorContains(t, err, "overflow")
 	assert.ErrorContains(t, err, "original=")
@@ -131,7 +131,7 @@ func TestQuotaFromDecimalChecked(t *testing.T) {
 func TestWalletQuotaFromDecimalStrict(t *testing.T) {
 	quota, err := WalletQuotaFromDecimalStrict(decimal.NewFromInt(4_294_500_000))
 	require.NoError(t, err)
-	assert.Equal(t, 4_294_500_000, quota)
+	assert.Equal(t, int64(4_294_500_000), quota)
 
 	quota, err = WalletQuotaFromDecimalStrict(decimal.NewFromInt(MaxWalletQuota))
 	require.NoError(t, err)
@@ -143,4 +143,9 @@ func TestWalletQuotaFromDecimalStrict(t *testing.T) {
 	require.ErrorAs(t, err, &clamp)
 	assert.Equal(t, "WalletQuotaFromDecimal", clamp.Op)
 	assert.Equal(t, QuotaClampOverflow, clamp.Kind)
+}
+
+func TestValidateWalletQuotaUsesTheInt64WalletBoundary(t *testing.T) {
+	require.NoError(t, ValidateWalletQuota(MaxWalletQuota))
+	require.Error(t, ValidateWalletQuota(MaxWalletQuota+1))
 }
