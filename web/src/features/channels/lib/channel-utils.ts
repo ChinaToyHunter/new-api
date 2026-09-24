@@ -56,6 +56,7 @@ export function getChannelTypeIcon(type: number): string {
     60: 'NewAPI', // New API
     62: 'Vllm', // vLLM
     63: 'SGLang', // SGLang
+    64: 'Vercel', // Vercel
     3: 'Azure', // Azure
 
     // Anthropic

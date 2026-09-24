@@ -30,6 +30,7 @@ export interface ChannelTypeConfig {
   id: number
   name: string
   icon: string
+  defaultBaseUrl?: string
   requiresOrganization?: boolean
   requiresRegion?: boolean
   supportedModels?: string[]
@@ -178,6 +179,18 @@ export const CHANNEL_TYPE_CONFIGS: Record<number, ChannelTypeConfig> = {
       baseUrl: 'Base URL is required for this channel type',
       key: 'Enter API key for this channel',
       models: 'Models',
+    },
+  },
+  64: {
+    id: 64,
+    name: CHANNEL_TYPES[64],
+    icon: 'Vercel',
+    defaultBaseUrl: 'https://ai-gateway.vercel.sh',
+    hints: {
+      baseUrl: 'Vercel AI Gateway base URL',
+      key: 'Vercel AI Gateway API key',
+      models:
+        'e.g. google/gemini-3.8-flash, anthropic/claude-sonnet-4, openai/gpt-4o',
     },
   },
 }

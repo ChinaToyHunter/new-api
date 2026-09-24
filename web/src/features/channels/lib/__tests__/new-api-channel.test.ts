@@ -22,8 +22,12 @@ import {
   CHANNEL_TYPE_NEW_API,
   CHANNEL_TYPE_VLLM,
   CHANNEL_TYPE_SGLANG,
+  CHANNEL_TYPE_VERCEL,
   CHANNEL_TYPE_OPTIONS,
+  CLAUDE_FIELD_PASSTHROUGH_TYPES,
+  FIELD_PASSTHROUGH_TYPES,
   MODEL_FETCHABLE_TYPES,
+  OPENAI_FIELD_PASSTHROUGH_TYPES,
 } from '../../constants'
 import {
   CHANNEL_FORM_DEFAULT_VALUES,
@@ -143,5 +147,24 @@ describe.each([
       models: 'deepseek-v4-flash-vision-exp',
       key: 'EMPTY',
     })
+  })
+})
+
+describe('Vercel channel', () => {
+  test('registers selection metadata and model discovery', () => {
+    const option = CHANNEL_TYPE_OPTIONS.find(
+      (item) => item.value === CHANNEL_TYPE_VERCEL
+    )
+
+    expect(option).toEqual({ value: CHANNEL_TYPE_VERCEL, label: 'Vercel' })
+    expect(getChannelTypeIcon(CHANNEL_TYPE_VERCEL)).toBe('Vercel')
+    expect(getChannelTypeConfig(CHANNEL_TYPE_VERCEL).icon).toBe('Vercel')
+    expect(getChannelTypeConfig(CHANNEL_TYPE_VERCEL).defaultBaseUrl).toBe(
+      'https://ai-gateway.vercel.sh'
+    )
+    expect(MODEL_FETCHABLE_TYPES.has(CHANNEL_TYPE_VERCEL)).toBe(true)
+    expect(FIELD_PASSTHROUGH_TYPES.has(CHANNEL_TYPE_VERCEL)).toBe(true)
+    expect(OPENAI_FIELD_PASSTHROUGH_TYPES.has(CHANNEL_TYPE_VERCEL)).toBe(true)
+    expect(CLAUDE_FIELD_PASSTHROUGH_TYPES.has(CHANNEL_TYPE_VERCEL)).toBe(true)
   })
 })

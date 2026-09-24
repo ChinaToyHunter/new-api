@@ -33,6 +33,8 @@ export const CHANNEL_TYPE_VLLM = 62
 
 export const CHANNEL_TYPE_SGLANG = 63
 
+export const CHANNEL_TYPE_VERCEL = 64
+
 export const CHANNEL_TYPES = {
   0: 'Unknown',
   1: 'OpenAI',
@@ -94,6 +96,7 @@ export const CHANNEL_TYPES = {
   61: 'Task Plugin',
   62: 'vLLM',
   63: 'SGLang',
+  64: 'Vercel',
 } as const
 
 export type ChannelProviderPresentation = {
@@ -175,15 +178,65 @@ export const CHANNEL_PROVIDER_PRESENTATION: Partial<
   },
   62: { descriptionKey: 'Connect to self-hosted models served by vLLM' },
   63: { descriptionKey: 'Connect to self-hosted models served by SGLang' },
+  64: { descriptionKey: 'Connect to models through the Vercel AI Gateway' },
 } satisfies Record<
   Exclude<keyof typeof CHANNEL_TYPES, 0 | typeof CHANNEL_TYPE_TASK_PLUGIN>,
   ChannelProviderPresentation
 >
 
 const CHANNEL_TYPE_DISPLAY_ORDER: number[] = [
-  1, 14, 33, 24, 43, 3, 41, 48, 60, 58, 61, 42, 34, 20, 4, 62, 40, 27, 25, 17,
-  26, 15, 46, 23, 18, 45, 31, 35, 49, 19, 47, 37, 38, 39, 11, 8, 57, 59, 22,
-  21, 44, 2, 5, 36, 50, 51, 52, 53, 54, 55, 56,
+  1,
+  14,
+  33,
+  24,
+  43,
+  3,
+  41,
+  48,
+  60,
+  58,
+  CHANNEL_TYPE_VERCEL,
+  61,
+  42,
+  34,
+  20,
+  4,
+  CHANNEL_TYPE_VLLM,
+  40,
+  27,
+  25,
+  17,
+  26,
+  15,
+  46,
+  23,
+  18,
+  45,
+  31,
+  35,
+  49,
+  19,
+  47,
+  37,
+  38,
+  39,
+  11,
+  8,
+  57,
+  59,
+  22,
+  21,
+  44,
+  2,
+  5,
+  36,
+  50,
+  51,
+  52,
+  53,
+  54,
+  55,
+  56,
 ]
 
 export const CHANNEL_TYPE_OPTIONS: { value: number; label: string }[] = (() => {
@@ -523,6 +576,7 @@ export const MODEL_FETCHABLE_TYPES = new Set([
   60,
   CHANNEL_TYPE_VLLM,
   CHANNEL_TYPE_SGLANG,
+  CHANNEL_TYPE_VERCEL,
 ])
 
 export const FIELD_PASSTHROUGH_TYPES = new Set([
@@ -534,6 +588,7 @@ export const FIELD_PASSTHROUGH_TYPES = new Set([
   CHANNEL_TYPE_NEW_API,
   CHANNEL_TYPE_VLLM,
   CHANNEL_TYPE_SGLANG,
+  CHANNEL_TYPE_VERCEL,
 ])
 
 export const OPENAI_FIELD_PASSTHROUGH_TYPES = new Set([
@@ -544,6 +599,7 @@ export const OPENAI_FIELD_PASSTHROUGH_TYPES = new Set([
   CHANNEL_TYPE_NEW_API,
   CHANNEL_TYPE_VLLM,
   CHANNEL_TYPE_SGLANG,
+  CHANNEL_TYPE_VERCEL,
 ])
 
 export const CLAUDE_FIELD_PASSTHROUGH_TYPES = new Set([
@@ -553,6 +609,7 @@ export const CLAUDE_FIELD_PASSTHROUGH_TYPES = new Set([
   CHANNEL_TYPE_NEW_API,
   CHANNEL_TYPE_VLLM,
   CHANNEL_TYPE_SGLANG,
+  CHANNEL_TYPE_VERCEL,
 ])
 
 export const TYPE_TO_KEY_PROMPT: Record<number, string> = {
