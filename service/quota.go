@@ -11,7 +11,6 @@ import (
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/billingexpr"
-	perfmetrics "github.com/QuantumNous/new-api/pkg/perf_metrics"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
@@ -285,22 +284,35 @@ func CalcOpenRouterCacheCreateTokens(usage dto.Usage, priceData types.PriceData)
 
 func PostAudioConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, usage *dto.Usage, extraContent string) {
 
+	// Some upstreams omit usage for audio responses. Keep the settlement path
+	// total, and use the frozen estimate when a fixed-price expression still
+	// needs to evaluate its request conditions.
+	billingUsage := usage
+	if billingUsage == nil {
+		billingUsage = &dto.Usage{}
+		if snap := relayInfo.TieredBillingSnapshot; snap != nil && billingexpr.UsesFixedPricingByHash(snap.ExprString, snap.ExprHash) {
+			billingUsage.PromptTokens = relayInfo.GetEstimatePromptTokens()
+			billingUsage.TotalTokens = billingUsage.PromptTokens
+		}
+	}
+
 	var tieredUsedVars map[string]bool
 	if snap := relayInfo.TieredBillingSnapshot; snap != nil {
 		tieredUsedVars = billingexpr.UsedVars(snap.ExprString)
 	}
 	var tieredResult *billingexpr.TieredResult
-	tieredOk, tieredQuota, tieredRes := TryTieredSettle(relayInfo, BuildTieredTokenParams(usage, false, tieredUsedVars))
+	tieredOk, tieredQuota, tieredRes := TryTieredSettle(relayInfo, BuildTieredTokenParams(billingUsage, false, tieredUsedVars))
 	if tieredOk {
 		tieredResult = tieredRes
 	}
+	fixedPriceBilling := tieredOk && isFixedPriceSettlement(relayInfo, tieredRes)
 
 	useTimeSeconds := time.Now().Unix() - relayInfo.StartTime.Unix()
-	textInputTokens := usage.PromptTokensDetails.TextTokens
-	textOutTokens := usage.CompletionTokenDetails.TextTokens
+	textInputTokens := billingUsage.PromptTokensDetails.TextTokens
+	textOutTokens := billingUsage.CompletionTokenDetails.TextTokens
 
-	audioInputTokens := usage.PromptTokensDetails.AudioTokens
-	audioOutTokens := usage.CompletionTokenDetails.AudioTokens
+	audioInputTokens := billingUsage.PromptTokensDetails.AudioTokens
+	audioOutTokens := billingUsage.CompletionTokenDetails.AudioTokens
 
 	tokenName := ctx.GetString("token_name")
 	billingModelName := relayInfo.GetBillingModelName()
@@ -334,7 +346,7 @@ func PostAudioConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, u
 		quota = tieredQuota
 	}
 
-	totalTokens := usage.TotalTokens
+	totalTokens := billingUsage.TotalTokens
 	var logContent string
 	if !usePrice {
 		logContent = fmt.Sprintf("模型倍率 %.2f，补全倍率 %.2f，音频倍率 %.2f，音频补全倍率 %.2f，分组倍率 %.2f",
@@ -343,10 +355,10 @@ func PostAudioConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, u
 		logContent = fmt.Sprintf("模型价格 %.2f，分组倍率 %.2f", modelPrice, groupRatio)
 	}
 
-	// record all the consume log even if quota is 0
-	if totalTokens == 0 {
-		// in this case, must be some error happened
-		// we cannot just return, because we may have to return the pre-consumed quota
+	// Zero-token audio usage normally means the upstream did not return billable
+	// usage. A request-priced tier is independent of token usage and must still be
+	// settled exactly once.
+	if totalTokens == 0 && !fixedPriceBilling {
 		quota = 0
 		logContent += "（可能是上游超时）"
 		logger.LogError(ctx, fmt.Sprintf("total tokens is 0, cannot consume quota, userId %d, channelId %d, "+
@@ -364,7 +376,7 @@ func PostAudioConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, u
 	if extraContent != "" {
 		logContent += ", " + extraContent
 	}
-	other := GenerateAudioOtherInfo(ctx, relayInfo, usage, modelRatio, groupRatio,
+	other := GenerateAudioOtherInfo(ctx, relayInfo, billingUsage, modelRatio, groupRatio,
 		completionRatio.InexactFloat64(), audioRatio.InexactFloat64(), audioCompletionRatio.InexactFloat64(), modelPrice, relayInfo.PriceData.GroupRatioInfo.GroupSpecialRatio)
 	if tieredResult != nil {
 		InjectTieredBillingInfo(other, relayInfo, tieredResult)
@@ -372,8 +384,8 @@ func PostAudioConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, u
 	attachQuotaSaturation(ctx, relayInfo, other)
 	model.RecordConsumeLog(ctx, relayInfo.UserId, model.RecordConsumeLogParams{
 		ChannelId:        relayInfo.ChannelId,
-		PromptTokens:     usage.PromptTokens,
-		CompletionTokens: usage.CompletionTokens,
+		PromptTokens:     billingUsage.PromptTokens,
+		CompletionTokens: billingUsage.CompletionTokens,
 		ModelName:        logModel,
 		TokenName:        tokenName,
 		Quota:            quota,
@@ -384,9 +396,7 @@ func PostAudioConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, u
 		Group:            relayInfo.UsingGroup,
 		Other:            other,
 	})
-	gopool.Go(func() {
-		perfmetrics.RecordRelaySample(relayInfo, true, int64(usage.CompletionTokens))
-	})
+	relayInfo.PerformanceOutputTokens = int64(billingUsage.CompletionTokens)
 }
 
 func PreConsumeTokenQuota(relayInfo *relaycommon.RelayInfo, quota int) error {
@@ -438,9 +448,9 @@ func postConsumeQuotaWithResult(relayInfo *relaycommon.RelayInfo, quota int, pre
 	} else {
 		// Wallet
 		if quota > 0 {
-			err = model.DecreaseUserQuota(relayInfo.UserId, quota, false)
+			err = model.DecreaseUserQuota(relayInfo.UserId, int64(quota), false)
 		} else {
-			err = model.IncreaseUserQuota(relayInfo.UserId, -quota, false)
+			err = model.IncreaseUserQuota(relayInfo.UserId, int64(-quota), false)
 		}
 		if err != nil {
 			return result, err

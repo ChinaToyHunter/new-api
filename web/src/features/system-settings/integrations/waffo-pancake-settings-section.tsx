@@ -22,6 +22,7 @@ import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 
 import { Button } from '@/components/ui/button'
+import { Combobox } from '@/components/ui/combobox'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import {
@@ -32,6 +33,7 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { Textarea } from '@/components/ui/textarea'
+import { handleServerError } from '@/lib/handle-server-error'
 
 import { removeTrailingSlash } from './utils'
 import {
@@ -206,19 +208,20 @@ export function WaffoPancakeSettingsSection({
           stores = (body.data as { stores: CatalogStore[] }).stores ?? []
         } else {
           const reason = typeof body?.data === 'string' ? body.data : undefined
-          toast.error(
-            reason
+          handleServerError(body, undefined, {
+            title: reason
               ? `${t('Credentials verification failed')}: ${reason}`
               : t(
                   'Credentials verification failed — double-check Merchant ID and API private key.'
-                )
-          )
+                ),
+          })
           setPhase('idle')
           return
         }
       } catch (err) {
         if (serial !== fetchSerialRef.current) return
-        toast.error(
+        handleServerError(
+          err,
           `${t('Credentials verification failed')}: ${
             err instanceof Error ? err.message : String(err)
           }`
@@ -370,11 +373,14 @@ export function WaffoPancakeSettingsSection({
       const reason =
         errData?.error ??
         (typeof body?.data === 'string' ? body.data : undefined)
-      toast.error(
-        reason ? `${t('Creation failed')}: ${reason}` : t('Creation failed')
-      )
+      handleServerError(body, undefined, {
+        title: reason
+          ? `${t('Creation failed')}: ${reason}`
+          : t('Creation failed'),
+      })
     } catch (err) {
-      toast.error(
+      handleServerError(
+        err,
         `${t('Creation failed')}: ${err instanceof Error ? err.message : String(err)}`
       )
     } finally {
@@ -695,8 +701,8 @@ export function WaffoPancakeSettingsSection({
               <div className='grid grid-cols-2 gap-3'>
                 <div className='grid gap-1.5'>
                   <Label>{t('Store')}</Label>
-                  <Select
-                    items={storeSelectItems}
+                  <Combobox
+                    options={storeSelectItems}
                     value={chosenStoreID}
                     onValueChange={(value) => {
                       // Base UI Select can deliver null on deselect.
@@ -706,24 +712,15 @@ export function WaffoPancakeSettingsSection({
                       })
                       onValueChange('WaffoPancakeCurrency', '')
                     }}
-                  >
-                    <SelectTrigger className='w-full'>
-                      <SelectValue placeholder={t('Select a store')} />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {storeSelectItems.map((item) => (
-                        <SelectItem key={item.value} value={item.value}>
-                          {item.label}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                    className='w-full'
+                    placeholder={t('Select a store')}
+                  />
                 </div>
 
                 <div className='grid gap-1.5'>
                   <Label>{t('Product')}</Label>
-                  <Select
-                    items={productSelectItems}
+                  <Combobox
+                    options={productSelectItems}
                     value={chosenProductID}
                     onValueChange={(value) => {
                       onSelectedBindingChange((previous) => ({
@@ -733,18 +730,9 @@ export function WaffoPancakeSettingsSection({
                       onValueChange('WaffoPancakeCurrency', '')
                     }}
                     disabled={!chosenStoreID || productSelectItems.length === 0}
-                  >
-                    <SelectTrigger className='w-full'>
-                      <SelectValue placeholder={t('Select a product')} />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {productSelectItems.map((item) => (
-                        <SelectItem key={item.value} value={item.value}>
-                          {item.label}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                    className='w-full'
+                    placeholder={t('Select a product')}
+                  />
                 </div>
               </div>
 

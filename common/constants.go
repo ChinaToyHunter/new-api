@@ -4,6 +4,7 @@ import (
 	"crypto/tls"
 	//"os"
 	//"strconv"
+	"math"
 	"sync"
 	"time"
 
@@ -172,6 +173,24 @@ var BatchUpdateInterval int
 var RelayTimeout int // unit is second
 
 var RelayIdleConnTimeout int // unit is second
+
+// MaxTimeoutSeconds is the largest whole number of seconds that still fits in a
+// time.Duration (~292 years). Larger values wrap around when multiplied by
+// time.Second, turning a long timeout into a tiny or negative one.
+const MaxTimeoutSeconds int64 = math.MaxInt64 / int64(time.Second)
+
+// TimeoutDuration converts a configured timeout in seconds into a
+// time.Duration. Non-positive values disable the timeout, and oversized values
+// saturate at MaxTimeoutSeconds so the conversion cannot overflow.
+func TimeoutDuration(seconds int) time.Duration {
+	if seconds <= 0 {
+		return 0
+	}
+	if int64(seconds) > MaxTimeoutSeconds {
+		return time.Duration(MaxTimeoutSeconds) * time.Second
+	}
+	return time.Duration(seconds) * time.Second
+}
 
 // RelayResponseHeaderTimeout limits how long the relay transport waits for the
 // upstream response headers after the request has been fully written.

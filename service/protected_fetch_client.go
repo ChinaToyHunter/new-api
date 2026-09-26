@@ -92,7 +92,7 @@ func newProtectedFetchHTTPClientWithProxy(resolver ssrfResolver, dialContext fun
 		CheckRedirect: checkProtectedFetchRedirect,
 	}
 	if common.RelayTimeout != 0 {
-		client.Timeout = time.Duration(common.RelayTimeout) * time.Second
+		client.Timeout = common.TimeoutDuration(common.RelayTimeout)
 	}
 	return client
 }
@@ -156,7 +156,7 @@ func (t *ssrfProtectedRoundTripper) newTransport(proxyURL *url.URL) *http.Transp
 	transport := &http.Transport{
 		MaxIdleConns:        common.RelayMaxIdleConns,
 		MaxIdleConnsPerHost: common.RelayMaxIdleConnsPerHost,
-		IdleConnTimeout:     time.Duration(common.RelayIdleConnTimeout) * time.Second,
+		IdleConnTimeout:     common.TimeoutDuration(common.RelayIdleConnTimeout),
 		ForceAttemptHTTP2:   true,
 		Proxy:               proxyFunc,
 		DialContext:         dialContext,

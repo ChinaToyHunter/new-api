@@ -13,13 +13,13 @@ import (
 const (
 	MaxQuota       = math.MaxInt32
 	MinQuota       = math.MinInt32
-	MaxWalletQuota = 1_000_000_000_000
+	MaxWalletQuota int64 = 1_000_000_000_000
 )
 
 // ValidateWalletQuota enforces the upper bound shared by wallet mutations.
 // Negative balances remain valid because billing can temporarily overdraw a
 // wallet; callers that accept credits must apply their own positive check.
-func ValidateWalletQuota(quota int) error {
+func ValidateWalletQuota(quota int64) error {
 	if quota > MaxWalletQuota {
 		return fmt.Errorf("wallet quota exceeds %d", MaxWalletQuota)
 	}
@@ -44,7 +44,7 @@ type QuotaClamp struct {
 	Op       string         `json:"op"`       // "QuotaFromFloat" | "QuotaRound" | "QuotaFromDecimal" | "WalletQuotaFromDecimal"
 	Kind     QuotaClampKind `json:"kind"`     // "overflow" | "underflow" | "nan"
 	Original float64        `json:"original"` // best-effort pre-clamp value (decimal -> float64 approx)
-	Clamped  int            `json:"clamped"`  // the saturated result actually used
+	Clamped  int64          `json:"clamped"`  // the saturated result actually used
 }
 
 // Error lets the same typed value serve both as the settlement audit marker
@@ -59,11 +59,11 @@ func (c *QuotaClamp) Error() string {
 // AuditMap renders the clamp as the marker stored under a log's
 // admin_info.quota_saturation. Centralized here so every billing path (consume
 // logs, task billing logs, task compensation logs) records the same shape.
-func (c *QuotaClamp) AuditMap() map[string]interface{} {
+func (c *QuotaClamp) AuditMap() map[string]any {
 	if c == nil {
 		return nil
 	}
-	return map[string]interface{}{
+	return map[string]any{
 		"op":       c.Op,
 		"kind":     c.Kind,
 		"original": c.Original,
@@ -89,14 +89,37 @@ func saturateQuotaBounded(value float64, op string, maxQuota int, minQuota int) 
 	case math.IsNaN(value):
 		clamp = &QuotaClamp{Op: op, Kind: QuotaClampNaN, Original: value, Clamped: 0}
 	case value > float64(maxQuota):
-		clamp = &QuotaClamp{Op: op, Kind: QuotaClampOverflow, Original: value, Clamped: maxQuota}
+		clamp = &QuotaClamp{Op: op, Kind: QuotaClampOverflow, Original: value, Clamped: int64(maxQuota)}
 	case value < float64(minQuota):
-		clamp = &QuotaClamp{Op: op, Kind: QuotaClampUnderflow, Original: value, Clamped: minQuota}
+		clamp = &QuotaClamp{Op: op, Kind: QuotaClampUnderflow, Original: value, Clamped: int64(minQuota)}
 	default:
 		return int(value), nil
 	}
 	SysError(clamp.Error())
+	return int(clamp.Clamped), clamp
+}
+
+func saturateWalletQuotaBounded(value float64, op string, maxQuota int64, minQuota int64) (int64, *QuotaClamp) {
+	var clamp *QuotaClamp
+	switch {
+	case math.IsNaN(value):
+		clamp = &QuotaClamp{Op: op, Kind: QuotaClampNaN, Original: value, Clamped: 0}
+	case value > float64(maxQuota):
+		clamp = &QuotaClamp{Op: op, Kind: QuotaClampOverflow, Original: value, Clamped: maxQuota}
+	case value < float64(minQuota):
+		clamp = &QuotaClamp{Op: op, Kind: QuotaClampUnderflow, Original: value, Clamped: minQuota}
+	default:
+		return int64(value), nil
+	}
+	SysError(clamp.Error())
 	return clamp.Clamped, clamp
+}
+
+func strictWalletQuota(quota int64, clamp *QuotaClamp) (int64, error) {
+	if clamp != nil {
+		return 0, clamp
+	}
+	return quota, nil
 }
 
 func strictQuota(quota int, clamp *QuotaClamp) (int, error) {
@@ -169,7 +192,7 @@ func QuotaFromDecimalStrict(d decimal.Decimal) (int, error) {
 
 // WalletQuotaFromDecimalStrict converts wallet and top-up values within the
 // JavaScript-safe integer range, which is also exactly representable by float64.
-func WalletQuotaFromDecimalStrict(d decimal.Decimal) (int, error) {
+func WalletQuotaFromDecimalStrict(d decimal.Decimal) (int64, error) {
 	f, _ := d.Round(0).Float64()
-	return strictQuota(saturateQuotaBounded(f, "WalletQuotaFromDecimal", MaxWalletQuota, -MaxWalletQuota))
+	return strictWalletQuota(saturateWalletQuotaBounded(f, "WalletQuotaFromDecimal", MaxWalletQuota, -MaxWalletQuota))
 }

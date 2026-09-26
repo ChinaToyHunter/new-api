@@ -17,14 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { AlertTriangle, GripVertical, Plus, Trash2 } from 'lucide-react'
-import {
-  useCallback,
-  useEffect,
-  useMemo,
-  useState,
-  memo,
-  type ReactNode,
-} from 'react'
+import { useCallback, useEffect, useMemo, useState, memo, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { StaticDataTable } from '@/components/data-table/static/static-data-table'
@@ -38,15 +31,8 @@ import {
   CardTitle,
 } from '@/components/ui/card'
 import { Checkbox } from '@/components/ui/checkbox'
+import { Combobox } from '@/components/ui/combobox'
 import { Input } from '@/components/ui/input'
-import {
-  Select,
-  SelectContent,
-  SelectGroup,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
 
 import { safeJsonParse } from '../utils/json-parser'
 import { GroupSpecialUsableRulesEditor } from './group-special-usable-editor'
@@ -306,27 +292,16 @@ function GroupNameSelect(props: GroupNameSelectProps) {
   }, [props.options, props.value])
 
   return (
-    <Select
-      value={props.value === '' ? null : props.value}
+    <Combobox
+      options={options.map((name) => ({ value: name, label: name }))}
+      value={props.value}
       onValueChange={(value) => {
-        if (typeof value === 'string' && value !== '') {
-          props.onValueChange(value)
-        }
+        if (value) props.onValueChange(value)
       }}
-    >
-      <SelectTrigger className={props.className ?? 'w-48'}>
-        <SelectValue placeholder={props.placeholder} />
-      </SelectTrigger>
-      <SelectContent alignItemWithTrigger={false}>
-        <SelectGroup>
-          {options.map((name) => (
-            <SelectItem key={name} value={name}>
-              {name}
-            </SelectItem>
-          ))}
-        </SelectGroup>
-      </SelectContent>
-    </Select>
+      className={props.className ?? 'w-48'}
+      placeholder={props.placeholder}
+      aria-label={props.placeholder}
+    />
   )
 }
 
@@ -787,7 +762,7 @@ function AccountGroupsTable(props: AccountGroupsTableProps) {
                 <Input
                   type='number'
                   min={0}
-                  step={0.1}
+                  step={0.0001}
                   value={row.topupRatio}
                   placeholder={t('Not set')}
                   onChange={(event) =>
@@ -948,7 +923,7 @@ function RouteGroupsTable(props: RouteGroupsTableProps) {
                 <Input
                   type='number'
                   min={0}
-                  step={0.1}
+                  step={0.0001}
                   value={row.ratio}
                   onChange={(event) =>
                     props.onUpdate(row._id, 'ratio', event.target.value)
@@ -1197,7 +1172,7 @@ function GroupOverrideRules(props: GroupOverrideRulesProps) {
                       <Input
                         type='number'
                         min={0}
-                        step={0.1}
+                        step={0.0001}
                         value={row.ratio}
                         onChange={(event) =>
                           updateRow(row._id, 'ratio', event.target.value)
