@@ -194,7 +194,7 @@ var ChannelTypeNames = map[int]string{
 	ChannelTypeJimeng:         "Jimeng",
 	ChannelTypeVidu:           "Vidu",
 	ChannelTypeSubmodel:       "Submodel",
-	ChannelTypeDoubaoVideo:    "DoubaoVideo",
+	ChannelTypeDoubaoVideo:    "Doubao",
 	ChannelTypeSora:           "Sora",
 	ChannelTypeReplicate:      "Replicate",
 	ChannelTypeCodex:          "ChatGPT Subscription (Codex)",

@@ -263,6 +263,9 @@ func validateOptionValue(key string, value string) error {
 	if operation_setting.IsPaymentFeeOptionKey(key) {
 		return operation_setting.ValidatePaymentFeeOption(key, value)
 	}
+	if err := operation_setting.ValidateQuotaOption(key, value); err != nil {
+		return err
+	}
 	if key == operation_setting.ToolPriceOptionKey {
 		return operation_setting.ValidateToolPricesJSON(value)
 	}

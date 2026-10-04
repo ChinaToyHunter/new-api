@@ -18,7 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { Code2, Eye, HelpCircle } from 'lucide-react'
 import { memo, useCallback, useState, type ReactNode } from 'react'
-import type { UseFormReturn } from 'react-hook-form'
+import { useWatch, type UseFormReturn } from 'react-hook-form'
 import { useTranslation } from 'react-i18next'
 
 import {
@@ -60,7 +60,10 @@ import {
 } from '../components/settings-form-layout'
 import { SettingsPageActionsPortal } from '../components/settings-page-context'
 import { safeNumberFieldProps } from '../utils/numeric-field'
-import { GroupRatioVisualEditor } from './group-ratio-visual-editor'
+import {
+  GroupRatioVisualEditor,
+  type GroupSettingsSection,
+} from './group-ratio-visual-editor'
 
 type GroupFormValues = {
   AccountGroups: string
@@ -87,8 +90,10 @@ export const GroupRatioForm = memo(function GroupRatioForm({
   isSaving,
 }: GroupRatioFormProps) {
   const { t } = useTranslation()
+  const values = useWatch({ control: form.control })
   const [editMode, setEditMode] = useState<'visual' | 'json'>('visual')
   const [guideOpen, setGuideOpen] = useState(false)
+  const [section, setSection] = useState<GroupSettingsSection>('pricing')
 
   const handleFieldChange = useCallback(
     (field: keyof GroupFormValues, value: string) => {
@@ -133,22 +138,30 @@ export const GroupRatioForm = memo(function GroupRatioForm({
           <Button
             type='button'
             size='sm'
-            onClick={form.handleSubmit(onSave)}
+            onClick={form.handleSubmit(onSave, (errors) => {
+              if (errors.MaxTokenAutoGroups) {
+                setEditMode('visual')
+                setSection('auto')
+                requestAnimationFrame(() => form.setFocus('MaxTokenAutoGroups'))
+              }
+            })}
             disabled={isSaving}
           >
-            {isSaving ? t('Saving...') : t('Save group ratios')}
+            {isSaving ? t('Saving...') : t('Save group settings')}
           </Button>
         </SettingsPageActionsPortal>
         {editMode === 'visual' ? (
           <div className='space-y-6'>
             <GroupRatioVisualEditor
-              accountGroups={form.watch('AccountGroups')}
-              defaultUserGroup={form.watch('DefaultUserGroup')}
-              groupRatio={form.watch('GroupRatio')}
-              topupGroupRatio={form.watch('TopupGroupRatio')}
-              userUsableGroups={form.watch('UserUsableGroups')}
-              groupGroupRatio={form.watch('GroupGroupRatio')}
-              autoGroups={form.watch('AutoGroups')}
+              section={section}
+              onSectionChange={setSection}
+              accountGroups={values.AccountGroups ?? ''}
+              defaultUserGroup={values.DefaultUserGroup ?? ''}
+              groupRatio={values.GroupRatio ?? ''}
+              topupGroupRatio={values.TopupGroupRatio ?? ''}
+              userUsableGroups={values.UserUsableGroups ?? ''}
+              groupGroupRatio={values.GroupGroupRatio ?? ''}
+              autoGroups={values.AutoGroups ?? ''}
               maxTokenAutoGroupsField={
                 <FormField
                   control={form.control}
@@ -178,7 +191,32 @@ export const GroupRatioForm = memo(function GroupRatioForm({
                 />
               }
               groupSpecialUsableGroup={form.watch('GroupSpecialUsableGroup')}
-              defaultUseAutoGroup={form.watch('DefaultUseAutoGroup')}
+              defaultUseAutoGroupField={
+                <FormField
+                  control={form.control}
+                  name='DefaultUseAutoGroup'
+                  render={({ field }) => (
+                    <SettingsSwitchItem>
+                      <SettingsSwitchContent>
+                        <FormLabel>
+                          {t('Use auto for initial registration tokens')}
+                        </FormLabel>
+                        <FormDescription>
+                          {t(
+                            'When registration creates an initial token, use auto instead of inheriting the account group. Manually created tokens default to auto regardless of this setting.'
+                          )}
+                        </FormDescription>
+                      </SettingsSwitchContent>
+                      <FormControl>
+                        <Switch
+                          checked={field.value}
+                          onCheckedChange={field.onChange}
+                        />
+                      </FormControl>
+                    </SettingsSwitchItem>
+                  )}
+                />
+              }
               onChange={(field, value) =>
                 handleFieldChange(field as keyof GroupFormValues, value)
               }
@@ -355,7 +393,7 @@ export const GroupRatioForm = memo(function GroupRatioForm({
                   </FormControl>
                   <FormDescription>
                     {t(
-                      'JSON array of route group identifiers. When enabled below, new tokens rotate through this list.'
+                      'Priority order for tokens in the auto group. The system tries groups from top to bottom.'
                     )}
                   </FormDescription>
                   <FormMessage />
@@ -421,10 +459,12 @@ export const GroupRatioForm = memo(function GroupRatioForm({
               render={({ field }) => (
                 <SettingsSwitchItem>
                   <SettingsSwitchContent>
-                    <FormLabel>{t('Default to auto groups')}</FormLabel>
+                    <FormLabel>
+                      {t('Use auto for initial registration tokens')}
+                    </FormLabel>
                     <FormDescription>
                       {t(
-                        'Legacy compatibility field preserved for existing installations; use the account default and AutoGroups controls above.'
+                        'When registration creates an initial token, use auto instead of inheriting the account group. Manually created tokens default to auto regardless of this setting.'
                       )}
                     </FormDescription>
                   </SettingsSwitchContent>
@@ -728,7 +768,7 @@ vip          0.5     ${t('No')}                ${t('Assigned by administrator on
                 <GuideCodeBlock>{`["default", "vip"]`}</GuideCodeBlock>
                 <p className='text-muted-foreground text-sm leading-6'>
                   {t(
-                    'If default auto group is enabled, newly created tokens start with auto instead of an empty group.'
+                    'When registration creates an initial token, use auto instead of inheriting the account group. Manually created tokens default to auto regardless of this setting.'
                   )}
                 </p>
               </AccordionContent>

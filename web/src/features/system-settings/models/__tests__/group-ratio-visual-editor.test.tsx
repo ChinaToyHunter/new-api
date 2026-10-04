@@ -33,6 +33,8 @@ await i18n.use(initReactI18next).init({
 type Change = { field: string; value: string }
 
 const baseProps = {
+  section: 'pricing' as const,
+  onSectionChange: () => {},
   accountGroups: '{"default":"Default account","vip":"VIP account"}',
   defaultUserGroup: 'default',
   groupRatio: '{"default":1,"vip":2}',
@@ -48,11 +50,12 @@ const baseProps = {
     </label>
   ),
   groupSpecialUsableGroup: '{}',
-  defaultUseAutoGroup: false,
+  defaultUseAutoGroupField: <span>Auto-token setting</span>,
 }
 
 function renderEditor(changes: Change[]) {
-  return render(
+  const user = userEvent.setup()
+  const result = render(
     <I18nextProvider i18n={i18n}>
       <GroupRatioVisualEditor
         {...baseProps}
@@ -60,6 +63,7 @@ function renderEditor(changes: Change[]) {
       />
     </I18nextProvider>
   )
+  return { ...result, user }
 }
 
 function latestChange(changes: Change[], field: string): string {
@@ -86,8 +90,8 @@ beforeEach(() => {
 describe('group ratio visual editor preservation', () => {
   test('preserves top-up-only entries when editing an account description', async () => {
     const changes: Change[] = []
-    const user = userEvent.setup()
-    renderEditor(changes)
+    const { user } = renderEditor(changes)
+    await user.click(screen.getByRole('tab', { name: 'Pricing groups' }))
 
     const description = inputByValue('Default account')
     await user.clear(description)
@@ -101,8 +105,8 @@ describe('group ratio visual editor preservation', () => {
 
   test('preserves route-only entries and auto without promoting either into GroupRatio', async () => {
     const changes: Change[] = []
-    const user = userEvent.setup()
-    renderEditor(changes)
+    const { user } = renderEditor(changes)
+    await user.click(screen.getByRole('tab', { name: 'Pricing groups' }))
 
     const description = inputByValue('Default route')
     await user.clear(description)
@@ -124,9 +128,10 @@ describe('group ratio visual editor preservation', () => {
     expect(ratios).toEqual({ default: 1, vip: 2 })
   })
 
-  test('does not render route-only entries as editable route rows', () => {
+  test('does not render route-only entries as editable route rows', async () => {
     const changes: Change[] = []
-    renderEditor(changes)
+    const { user } = renderEditor(changes)
+    await user.click(screen.getByRole('tab', { name: 'Pricing groups' }))
 
     const routeCard = screen
       .getByText('Route and billing groups')
@@ -141,8 +146,8 @@ describe('group ratio visual editor preservation', () => {
 
   test('removes a main account row without deleting unrelated top-up orphan entries', async () => {
     const changes: Change[] = []
-    const user = userEvent.setup()
-    renderEditor(changes)
+    const { user } = renderEditor(changes)
+    await user.click(screen.getByRole('tab', { name: 'Pricing groups' }))
 
     const accountCard = screen.getByText('Account groups').closest('[class]')
     expect(accountCard).toBeTruthy()
@@ -167,8 +172,8 @@ describe('group ratio visual editor preservation', () => {
 
   test('does not serialize a negative top-up ratio entered in visual mode', async () => {
     const changes: Change[] = []
-    const user = userEvent.setup()
-    renderEditor(changes)
+    const { user } = renderEditor(changes)
+    await user.click(screen.getByRole('tab', { name: 'Pricing groups' }))
 
     const topup = inputByValue('1.5')
     await user.clear(topup)

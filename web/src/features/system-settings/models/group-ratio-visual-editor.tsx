@@ -16,11 +16,21 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { AlertTriangle, GripVertical, Plus, Trash2 } from 'lucide-react'
-import { useCallback, useEffect, useMemo, useState, memo, type ReactNode } from 'react'
+import { AlertTriangle, Plus, Search, Trash2, X } from 'lucide-react'
+import { Reorder } from 'motion/react'
+import {
+  memo,
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  type ReactNode,
+} from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { AutoGroupOrderItem } from '@/components/auto-group-order-item'
 import { StaticDataTable } from '@/components/data-table/static/static-data-table'
+import { EmptyState } from '@/components/empty-state'
 import { StatusBadge } from '@/components/status-badge'
 import { Button } from '@/components/ui/button'
 import {
@@ -33,11 +43,20 @@ import {
 import { Checkbox } from '@/components/ui/checkbox'
 import { Combobox } from '@/components/ui/combobox'
 import { Input } from '@/components/ui/input'
+import {
+  InputGroup,
+  InputGroupAddon,
+  InputGroupButton,
+  InputGroupInput,
+} from '@/components/ui/input-group'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 
 import { safeJsonParse } from '../utils/json-parser'
 import { GroupSpecialUsableRulesEditor } from './group-special-usable-editor'
 
 type GroupRatioVisualEditorProps = {
+  section: GroupSettingsSection
+  onSectionChange: (section: GroupSettingsSection) => void
   accountGroups: string
   defaultUserGroup: string
   groupRatio: string
@@ -47,9 +66,15 @@ type GroupRatioVisualEditorProps = {
   autoGroups: string
   maxTokenAutoGroupsField: ReactNode
   groupSpecialUsableGroup: string
-  defaultUseAutoGroup: boolean
+  defaultUseAutoGroupField: ReactNode
   onChange: (field: string, value: string) => void
 }
+
+export type GroupSettingsSection =
+  | 'pricing'
+  | 'overrides'
+  | 'visibility'
+  | 'auto'
 
 export type AccountGroupRow = {
   _id: string
@@ -309,6 +334,21 @@ export const GroupRatioVisualEditor = memo(function GroupRatioVisualEditor(
   props: GroupRatioVisualEditorProps
 ) {
   const { t } = useTranslation()
+  const [pricingQuery, setPricingQuery] = useState('')
+  const onSectionChange = props.onSectionChange
+  const changeSection = useCallback(
+    (value: string | null) => {
+      if (
+        value === 'pricing' ||
+        value === 'overrides' ||
+        value === 'visibility' ||
+        value === 'auto'
+      ) {
+        onSectionChange(value)
+      }
+    },
+    [onSectionChange]
+  )
   const onChange = props.onChange
   const [accountRows, setAccountRows] = useState(() =>
     buildAccountGroupRows(
@@ -397,6 +437,19 @@ export const GroupRatioVisualEditor = memo(function GroupRatioVisualEditor(
       )
     )
   }, [props.groupRatio, props.userUsableGroups])
+  const normalizedPricingQuery = pricingQuery.trim().toLowerCase()
+  const visibleAccountRows = accountRows.filter(
+    (row) =>
+      !normalizedPricingQuery ||
+      row.name.toLowerCase().includes(normalizedPricingQuery) ||
+      row.description.toLowerCase().includes(normalizedPricingQuery)
+  )
+  const visibleRouteRows = routeRows.filter(
+    (row) =>
+      !normalizedPricingQuery ||
+      row.name.toLowerCase().includes(normalizedPricingQuery) ||
+      row.description.toLowerCase().includes(normalizedPricingQuery)
+  )
 
   const emitAccountRows = useCallback(
     (nextRows: AccountGroupRow[]) => {
@@ -556,126 +609,217 @@ export const GroupRatioVisualEditor = memo(function GroupRatioVisualEditor(
   )
 
   return (
-    <div className='space-y-4'>
-      <AccountGroupsTable
-        rows={accountRows}
-        defaultUserGroup={props.defaultUserGroup}
-        onDefaultChange={(value) => onChange('DefaultUserGroup', value)}
-        onUpdate={updateAccountRow}
-        onAdd={addAccountRow}
-        onRemove={removeAccountRow}
-      />
-
-      <RouteGroupsTable
-        rows={routeRows}
-        onUpdate={updateRouteRow}
-        onAdd={addRouteRow}
-        onRemove={removeRouteRow}
-      />
-
-      <GroupOverrideRules
-        accountOptions={accountOptions}
-        routeOptions={routeOptions}
-        groupGroupRatio={props.groupGroupRatio}
-        routeRows={routeRows}
-        onChange={onChange}
-      />
-
-      <Card className={sectionCardClassName}>
-        <CardHeader className={sectionHeaderClassName}>
-          <CardTitle>{t('Auto route assignment order')}</CardTitle>
-          <CardDescription>
-            {t(
-              'AutoGroups contains route groups only. The system tries these route groups from top to bottom.'
-            )}
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <div className='space-y-4'>
-            {props.maxTokenAutoGroupsField}
-            <GroupNameSelect
-              options={autoGroupCandidates}
-              value=''
-              placeholder={t('Add route group')}
-              onValueChange={handleAutoGroupAdd}
-            />
-            {autoGroupsList.length > 0 && (
-              <div className='space-y-2'>
-                {autoGroupsList.map((routeGroup, index) => (
-                  <div
-                    key={routeGroup}
-                    className='flex items-center gap-2 rounded-md border p-3'
+    <Tabs
+      value={props.section}
+      onValueChange={changeSection}
+      className='min-w-0 gap-5'
+    >
+      <div className='min-w-0 overflow-x-auto pb-1'>
+        <TabsList aria-label={t('Group settings')} className='w-full min-w-max'>
+          <TabsTrigger value='pricing' className='px-3'>
+            {t('Pricing groups')}
+          </TabsTrigger>
+          <TabsTrigger value='overrides' className='px-3'>
+            {t('Special ratio rules')}
+          </TabsTrigger>
+          <TabsTrigger value='visibility' className='px-3'>
+            {t('Group visibility')}
+          </TabsTrigger>
+          <TabsTrigger value='auto' className='px-3'>
+            {t('Auto group order')}
+          </TabsTrigger>
+        </TabsList>
+      </div>
+      <TabsContent value='pricing' keepMounted>
+        <div className='space-y-4'>
+          <div className='flex flex-col gap-4'>
+            <InputGroup className='max-w-sm'>
+              <InputGroupAddon>
+                <Search aria-hidden='true' />
+              </InputGroupAddon>
+              <InputGroupInput
+                value={pricingQuery}
+                onChange={(event) => setPricingQuery(event.target.value)}
+                aria-label={t('Search groups by name or description')}
+                placeholder={t('Search groups by name or description')}
+              />
+              {pricingQuery && (
+                <InputGroupAddon align='inline-end'>
+                  <InputGroupButton
+                    size='icon-xs'
+                    aria-label={t('Clear search')}
+                    onClick={() => setPricingQuery('')}
                   >
-                    <GripVertical className='text-muted-foreground h-4 w-4' />
-                    <span className='font-medium'>{routeGroup}</span>
-                    {!routeOptions.includes(routeGroup) && (
-                      <UnknownBadge kind='route' />
-                    )}
-                    <div className='ml-auto flex gap-1'>
-                      <Button
-                        variant='ghost'
-                        size='sm'
-                        disabled={index === 0}
-                        onClick={() => handleAutoGroupMove(index, 'up')}
-                        aria-label={t('Move route group up')}
-                      >
-                        ↑
-                      </Button>
-                      <Button
-                        variant='ghost'
-                        size='sm'
-                        disabled={index === autoGroupsList.length - 1}
-                        onClick={() => handleAutoGroupMove(index, 'down')}
-                        aria-label={t('Move route group down')}
-                      >
-                        ↓
-                      </Button>
-                      <Button
-                        variant='ghost'
-                        size='sm'
-                        onClick={() => handleAutoGroupDelete(index)}
-                        aria-label={t('Remove route group')}
-                      >
-                        <Trash2 className='h-4 w-4' />
-                      </Button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
+                    <X aria-hidden='true' />
+                  </InputGroupButton>
+                </InputGroupAddon>
+              )}
+            </InputGroup>
           </div>
-        </CardContent>
-      </Card>
-
-      <GroupSpecialUsableRulesEditor
-        value={props.groupSpecialUsableGroup}
-        accountGroupOptions={accountOptions}
-        routeGroupOptions={routeOptions}
-        onChange={(value) => onChange('GroupSpecialUsableGroup', value)}
-      />
-
-      <Card className={sectionCardClassName}>
-        <CardHeader className={sectionHeaderClassName}>
-          <CardTitle>{t('Legacy auto-group compatibility')}</CardTitle>
-          <CardDescription>
-            {t(
-              'DefaultUseAutoGroup is preserved for backend compatibility and is not an active visual control. Configure the account default and AutoGroups above.'
-            )}
-          </CardDescription>
-        </CardHeader>
-        <CardContent className='text-muted-foreground text-sm'>
-          {props.defaultUseAutoGroup
-            ? t('Legacy DefaultUseAutoGroup is enabled.')
-            : t('Legacy DefaultUseAutoGroup is disabled.')}
-        </CardContent>
-      </Card>
-    </div>
+          {normalizedPricingQuery &&
+          visibleAccountRows.length === 0 &&
+          visibleRouteRows.length === 0 ? (
+            <EmptyState
+              title={t('No results found')}
+              action={
+                <div className='flex flex-wrap gap-2'>
+                  <Button
+                    variant='outline'
+                    size='sm'
+                    onClick={() => setPricingQuery('')}
+                  >
+                    {t('Clear search')}
+                  </Button>
+                  <Button
+                    size='sm'
+                    onClick={() => {
+                      setPricingQuery('')
+                      addAccountRow()
+                    }}
+                  >
+                    <Plus className='mr-2 h-4 w-4' />
+                    {t('Add account group')}
+                  </Button>
+                  <Button
+                    variant='outline'
+                    size='sm'
+                    onClick={() => {
+                      setPricingQuery('')
+                      addRouteRow()
+                    }}
+                  >
+                    <Plus className='mr-2 h-4 w-4' />
+                    {t('Add route group')}
+                  </Button>
+                </div>
+              }
+              className='min-h-48'
+            />
+          ) : (
+            <>
+              <AccountGroupsTable
+                rows={visibleAccountRows}
+                allRows={accountRows}
+                defaultUserGroup={props.defaultUserGroup}
+                query={normalizedPricingQuery}
+                onDefaultChange={(value) => onChange('DefaultUserGroup', value)}
+                onUpdate={updateAccountRow}
+                onAdd={() => {
+                  setPricingQuery('')
+                  addAccountRow()
+                }}
+                onRemove={removeAccountRow}
+                onClearSearch={() => setPricingQuery('')}
+              />
+              <RouteGroupsTable
+                rows={visibleRouteRows}
+                allRows={routeRows}
+                query={normalizedPricingQuery}
+                onUpdate={updateRouteRow}
+                onAdd={() => {
+                  setPricingQuery('')
+                  addRouteRow()
+                }}
+                onRemove={removeRouteRow}
+              />
+            </>
+          )}
+        </div>
+      </TabsContent>
+      <TabsContent value='overrides' keepMounted>
+        <GroupOverrideRules
+          accountOptions={accountOptions}
+          routeOptions={routeOptions}
+          groupGroupRatio={props.groupGroupRatio}
+          routeRows={routeRows}
+          onChange={onChange}
+        />
+      </TabsContent>
+      <TabsContent value='visibility' keepMounted>
+        <GroupSpecialUsableRulesEditor
+          value={props.groupSpecialUsableGroup}
+          accountGroupOptions={accountOptions}
+          routeGroupOptions={routeOptions}
+          onChange={(value) => onChange('GroupSpecialUsableGroup', value)}
+        />
+      </TabsContent>
+      <TabsContent value='auto' keepMounted>
+        <div className='space-y-4'>
+          <Card className={sectionCardClassName}>
+            <CardHeader className={sectionHeaderClassName}>
+              <CardTitle>{t('Auto route assignment order')}</CardTitle>
+              <CardDescription>
+                {t(
+                  'AutoGroups contains route groups only. The system tries these route groups from top to bottom.'
+                )}
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className='space-y-4'>
+                {props.maxTokenAutoGroupsField}
+                <GroupNameSelect
+                  options={autoGroupCandidates}
+                  value=''
+                  placeholder={t('Add route group')}
+                  onValueChange={handleAutoGroupAdd}
+                />
+                {autoGroupsList.length > 0 ? (
+                  <Reorder.Group
+                    axis='y'
+                    values={autoGroupsList}
+                    onReorder={(nextGroups) =>
+                      onChange(
+                        'AutoGroups',
+                        JSON.stringify(nextGroups, null, 2)
+                      )
+                    }
+                    as='ol'
+                    aria-label={t('Auto group order')}
+                    className='space-y-2'
+                  >
+                    {autoGroupsList.map((routeGroup, index) => (
+                      <AutoGroupOrderItem
+                        key={routeGroup}
+                        group={routeGroup}
+                        index={index}
+                        count={autoGroupsList.length}
+                        onMove={handleAutoGroupMove}
+                        onRemove={() => handleAutoGroupDelete(index)}
+                      >
+                        {!routeOptions.includes(routeGroup) && (
+                          <UnknownBadge kind='route' />
+                        )}
+                      </AutoGroupOrderItem>
+                    ))}
+                  </Reorder.Group>
+                ) : (
+                  <EmptyState
+                    title={t('No auto groups configured')}
+                    description={t(
+                      'Add groups in the order they should be tried.'
+                    )}
+                    className='min-h-48'
+                  />
+                )}
+              </div>
+            </CardContent>
+          </Card>
+          <Card className={sectionCardClassName}>
+            <CardContent className='pt-6'>
+              {props.defaultUseAutoGroupField}
+            </CardContent>
+          </Card>
+        </div>
+      </TabsContent>
+    </Tabs>
   )
 })
 
 type AccountGroupsTableProps = {
   rows: AccountGroupRow[]
+  allRows: AccountGroupRow[]
   defaultUserGroup: string
+  query: string
   onDefaultChange: (value: string) => void
   onUpdate: (
     rowId: string,
@@ -684,20 +828,21 @@ type AccountGroupsTableProps = {
   ) => void
   onAdd: () => void
   onRemove: (rowId: string) => void
+  onClearSearch: () => void
 }
 
 function AccountGroupsTable(props: AccountGroupsTableProps) {
   const { t } = useTranslation()
   const duplicateNames = useMemo(() => {
     const counts = new Map<string, number>()
-    for (const row of props.rows) {
+    for (const row of props.allRows) {
       const name = row.name.trim()
       if (name) counts.set(name, (counts.get(name) ?? 0) + 1)
     }
     return [...counts.entries()]
       .filter(([, count]) => count > 1)
       .map(([name]) => name)
-  }, [props.rows])
+  }, [props.allRows])
 
   return (
     <Card className={sectionCardClassName}>
@@ -711,20 +856,38 @@ function AccountGroupsTable(props: AccountGroupsTableProps) {
               )}
             </CardDescription>
           </div>
-          <Button onClick={props.onAdd} size='sm' className='sm:self-start'>
-            <Plus className='mr-2 h-4 w-4' />
-            {t('Add account group')}
-          </Button>
+          {!props.query && (
+            <Button onClick={props.onAdd} size='sm' className='sm:self-start'>
+              <Plus className='mr-2 h-4 w-4' />
+              {t('Add account group')}
+            </Button>
+          )}
         </div>
       </CardHeader>
       <CardContent>
         <StaticDataTable
+          tableProps={{ 'aria-label': t('Account groups') }}
           data={props.rows}
           getRowKey={(row) => row._id}
           emptyClassName='text-muted-foreground h-20 text-sm'
-          emptyContent={t(
-            'No account groups yet. Add an account group to get started.'
-          )}
+          emptyContent={
+            props.query ? (
+              <EmptyState
+                title={t('No results found')}
+                action={
+                  <Button
+                    variant='outline'
+                    size='sm'
+                    onClick={props.onClearSearch}
+                  >
+                    {t('Clear search')}
+                  </Button>
+                }
+              />
+            ) : (
+              t('No account groups yet. Add an account group to get started.')
+            )
+          }
           columns={[
             {
               id: 'account-group',
@@ -733,6 +896,7 @@ function AccountGroupsTable(props: AccountGroupsTableProps) {
               cell: (row) => (
                 <Input
                   value={row.name}
+                  aria-label={t('Account group ID')}
                   onChange={(event) =>
                     props.onUpdate(row._id, 'name', event.target.value)
                   }
@@ -747,6 +911,7 @@ function AccountGroupsTable(props: AccountGroupsTableProps) {
               cell: (row) => (
                 <Input
                   value={row.description}
+                  aria-label={t('Account group description')}
                   placeholder={t('Account group description')}
                   onChange={(event) =>
                     props.onUpdate(row._id, 'description', event.target.value)
@@ -763,6 +928,7 @@ function AccountGroupsTable(props: AccountGroupsTableProps) {
                   type='number'
                   min={0}
                   step={0.0001}
+                  aria-label={t('Top-up ratio')}
                   value={row.topupRatio}
                   placeholder={t('Not set')}
                   onChange={(event) =>
@@ -835,6 +1001,8 @@ function AccountGroupsTable(props: AccountGroupsTableProps) {
 
 type RouteGroupsTableProps = {
   rows: RouteGroupRow[]
+  allRows: RouteGroupRow[]
+  query: string
   onUpdate: (
     rowId: string,
     field: Exclude<keyof RouteGroupRow, '_id'>,
@@ -848,14 +1016,14 @@ function RouteGroupsTable(props: RouteGroupsTableProps) {
   const { t } = useTranslation()
   const duplicateNames = useMemo(() => {
     const counts = new Map<string, number>()
-    for (const row of props.rows) {
+    for (const row of props.allRows) {
       const name = row.name.trim()
       if (name) counts.set(name, (counts.get(name) ?? 0) + 1)
     }
     return [...counts.entries()]
       .filter(([, count]) => count > 1)
       .map(([name]) => name)
-  }, [props.rows])
+  }, [props.allRows])
 
   return (
     <Card className={sectionCardClassName}>
@@ -869,10 +1037,12 @@ function RouteGroupsTable(props: RouteGroupsTableProps) {
               )}
             </CardDescription>
           </div>
-          <Button onClick={props.onAdd} size='sm' className='sm:self-start'>
-            <Plus className='mr-2 h-4 w-4' />
-            {t('Add route group')}
-          </Button>
+          {!props.query && (
+            <Button onClick={props.onAdd} size='sm' className='sm:self-start'>
+              <Plus className='mr-2 h-4 w-4' />
+              {t('Add route group')}
+            </Button>
+          )}
         </div>
       </CardHeader>
       <CardContent>
@@ -880,9 +1050,13 @@ function RouteGroupsTable(props: RouteGroupsTableProps) {
           data={props.rows}
           getRowKey={(row) => row._id}
           emptyClassName='text-muted-foreground h-20 text-sm'
-          emptyContent={t(
-            'No route groups yet. Add a route group to get started.'
-          )}
+          emptyContent={
+            props.query ? (
+              <EmptyState title={t('No results found')} className='min-h-40' />
+            ) : (
+              t('No route groups yet. Add a route group to get started.')
+            )
+          }
           columns={[
             {
               id: 'route-group',
@@ -892,6 +1066,7 @@ function RouteGroupsTable(props: RouteGroupsTableProps) {
                 <div className='flex items-center gap-2'>
                   <Input
                     value={row.name}
+                    aria-label={t('Route group ID')}
                     onChange={(event) =>
                       props.onUpdate(row._id, 'name', event.target.value)
                     }
@@ -908,6 +1083,7 @@ function RouteGroupsTable(props: RouteGroupsTableProps) {
               cell: (row) => (
                 <Input
                   value={row.description}
+                  aria-label={t('Route group description')}
                   placeholder={t('Route group description')}
                   onChange={(event) =>
                     props.onUpdate(row._id, 'description', event.target.value)
@@ -924,6 +1100,7 @@ function RouteGroupsTable(props: RouteGroupsTableProps) {
                   type='number'
                   min={0}
                   step={0.0001}
+                  aria-label={t('Base ratio')}
                   value={row.ratio}
                   onChange={(event) =>
                     props.onUpdate(row._id, 'ratio', event.target.value)
@@ -942,7 +1119,7 @@ function RouteGroupsTable(props: RouteGroupsTableProps) {
                     onCheckedChange={(checked) =>
                       props.onUpdate(row._id, 'selectable', checked === true)
                     }
-                    aria-label={t('User-selectable')}
+                    aria-label={`${t('User-selectable')} ${row.name}`}
                   />
                 </div>
               ),

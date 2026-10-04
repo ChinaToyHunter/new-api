@@ -39,6 +39,8 @@ function PricingFixture() {
   return (
     <>
       <GroupRatioVisualEditor
+        section='pricing'
+        onSectionChange={() => {}}
         accountGroups={settings.AccountGroups}
         defaultUserGroup={settings.DefaultUserGroup}
         groupRatio={settings.GroupRatio}
@@ -48,7 +50,7 @@ function PricingFixture() {
         autoGroups='[]'
         maxTokenAutoGroupsField={null}
         groupSpecialUsableGroup='{}'
-        defaultUseAutoGroup={false}
+        defaultUseAutoGroupField={null}
         onChange={(field, value) =>
           setSettings((current) => ({ ...current, [field]: value }))
         }

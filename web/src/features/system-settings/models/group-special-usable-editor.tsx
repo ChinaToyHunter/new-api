@@ -16,7 +16,6 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { Combobox } from '@/components/ui/combobox'
 import {
   AlertTriangle,
   ChevronDown,
@@ -24,7 +23,7 @@ import {
   Plus,
   Trash2,
 } from 'lucide-react'
-import { useCallback, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { StatusBadge } from '@/components/status-badge'
@@ -41,8 +40,16 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from '@/components/ui/collapsible'
+import { Combobox } from '@/components/ui/combobox'
 import { Input } from '@/components/ui/input'
-import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 
 const sectionCardClassName =
   'relative shadow-sm ring-0 before:pointer-events-none before:absolute before:inset-0 before:rounded-xl before:border before:border-border/90'
@@ -141,13 +148,15 @@ function GroupSelect(props: GroupSelectProps) {
 
   return (
     <Combobox
-  options={knownOptions.map((name) => ({ value: name, label: name }))}
-  value={props.value}
-  onValueChange={(value) => { if (value) props.onValueChange(value) }}
-  className={props.className}
-  placeholder={props.placeholder}
-  aria-label={props.placeholder}
-/>
+      options={knownOptions.map((name) => ({ value: name, label: name }))}
+      value={props.value}
+      onValueChange={(value) => {
+        if (value) props.onValueChange(value)
+      }}
+      className={props.className}
+      placeholder={props.placeholder}
+      aria-label={props.placeholder}
+    />
   )
 }
 
@@ -174,6 +183,10 @@ function GroupSection(props: GroupSectionProps) {
   const [open, setOpen] = useState(false)
   const isKnownGroup = props.accountGroupOptions.includes(props.groupName)
 
+  useEffect(() => {
+    if (props.items.length > 0) setOpen(true)
+  }, [props.items.length])
+
   return (
     <Collapsible open={open} onOpenChange={setOpen}>
       <div className='rounded-lg border'>
@@ -181,7 +194,15 @@ function GroupSection(props: GroupSectionProps) {
           <div className='flex items-center gap-2'>
             <CollapsibleTrigger
               render={
-                <Button variant='ghost' size='sm' className='h-6 w-6 p-0' />
+                <Button
+                  variant='ghost'
+                  size='sm'
+                  className='h-6 w-6 p-0'
+                  aria-label={t('Rules for {{group}}', {
+                    group: props.groupName,
+                  })}
+                  aria-expanded={open}
+                />
               }
             >
               {open ? (
@@ -206,6 +227,7 @@ function GroupSection(props: GroupSectionProps) {
               variant='ghost'
               size='sm'
               className='h-7 w-7 p-0'
+              aria-label={t('Add rule')}
               onClick={() => props.onAdd(props.groupName)}
             >
               <Plus className='h-4 w-4' />
@@ -214,6 +236,9 @@ function GroupSection(props: GroupSectionProps) {
               variant='ghost'
               size='sm'
               className='text-destructive h-7 w-7 p-0'
+              aria-label={t('Remove rules for {{group}}', {
+                group: props.groupName,
+              })}
               onClick={() => props.onRemoveGroup(props.groupName)}
             >
               <Trash2 className='h-4 w-4' />
@@ -295,6 +320,9 @@ function GroupSection(props: GroupSectionProps) {
                   variant='ghost'
                   size='sm'
                   className='text-destructive h-8 w-8 p-0'
+                  aria-label={t('Remove rule for {{group}}', {
+                    group: rule.targetGroup || t('Group name'),
+                  })}
                   onClick={() => props.onRemove(rule._id)}
                 >
                   <Trash2 className='h-4 w-4' />
