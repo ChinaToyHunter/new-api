@@ -26,6 +26,8 @@ type taskPollingFetchAdaptor struct {
 	mu           sync.Mutex
 	initInfo     *relaycommon.RelayInfo
 	taskIDs      []string
+	apiKeys      []string
+	statusCode   int
 	fetched      chan string
 	blockTaskID  string
 	blockStarted chan struct{}
@@ -74,7 +76,7 @@ func (a *taskPollingFetchAdaptor) initChannelMeta() *relaycommon.ChannelMeta {
 	return a.initInfo.ChannelMeta
 }
 
-func (a *taskPollingFetchAdaptor) FetchTask(_ string, _ string, task *model.Task, _ string) (*http.Response, error) {
+func (a *taskPollingFetchAdaptor) FetchTask(_ string, apiKey string, task *model.Task, _ string) (*http.Response, error) {
 	taskID := ""
 	if task != nil {
 		taskID = task.GetUpstreamTaskID()
@@ -90,6 +92,7 @@ func (a *taskPollingFetchAdaptor) FetchTask(_ string, _ string, task *model.Task
 
 	a.mu.Lock()
 	a.taskIDs = append(a.taskIDs, taskID)
+	a.apiKeys = append(a.apiKeys, apiKey)
 	a.mu.Unlock()
 	if a.fetched != nil {
 		select {
@@ -110,8 +113,12 @@ func (a *taskPollingFetchAdaptor) FetchTask(_ string, _ string, task *model.Task
 	if err != nil {
 		return nil, err
 	}
+	statusCode := a.statusCode
+	if statusCode == 0 {
+		statusCode = http.StatusOK
+	}
 	return &http.Response{
-		StatusCode: http.StatusOK,
+		StatusCode: statusCode,
 		Body:       io.NopCloser(bytes.NewReader(responseBody)),
 	}, nil
 }
@@ -134,6 +141,12 @@ func (a *taskPollingFetchAdaptor) fetchedTaskIDs() []string {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	return append([]string(nil), a.taskIDs...)
+}
+
+func (a *taskPollingFetchAdaptor) fetchedAPIKeys() []string {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return append([]string(nil), a.apiKeys...)
 }
 
 func TestRedactVideoResponseBodyPreservesPollingPayloadShape(t *testing.T) {
@@ -267,6 +280,86 @@ func TestPollingPassesExecutingChannelTypeToAdaptor(t *testing.T) {
 	assert.Equal(t, constant.ChannelTypeNewAPI, meta.ChannelType)
 	assert.Equal(t, channelID, meta.ChannelId)
 	assert.Equal(t, baseURL, meta.ChannelBaseUrl)
+}
+
+func TestPollingKeepsPersistedSubmissionIdentityAfterChannelRotation(t *testing.T) {
+	const submittedKey = "submission-identity-fixture"
+	const rotatedKey = "rotated-channel-identity-fixture"
+	for _, testCase := range []struct {
+		name       string
+		legacy     bool
+		statusCode int
+		pollKey    string
+		status     model.TaskStatus
+		progress   string
+	}{
+		{name: "saved_key", statusCode: http.StatusOK, pollKey: submittedKey, status: model.TaskStatusInProgress, progress: "30%"},
+		{name: "legacy_without_key", legacy: true, statusCode: http.StatusOK, pollKey: rotatedKey, status: model.TaskStatusInProgress, progress: "30%"},
+		{name: "unauthorized", statusCode: http.StatusUnauthorized, pollKey: submittedKey, status: model.TaskStatusQueued, progress: "10%"},
+		{name: "forbidden", statusCode: http.StatusForbidden, pollKey: submittedKey, status: model.TaskStatusQueued, progress: "10%"},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			truncate(t)
+			previousCache, previousMaxFailures, previousFactory := common.MemoryCacheEnabled, constant.TaskPollMaxFailures, GetTaskAdaptorFunc
+			common.MemoryCacheEnabled = false
+			constant.TaskPollMaxFailures = 3
+			adaptor := &taskPollingFetchAdaptor{statusCode: testCase.statusCode}
+			GetTaskAdaptorFunc = func(constant.TaskPlatform) TaskPollingAdaptor { return adaptor }
+			t.Cleanup(func() {
+				common.MemoryCacheEnabled = previousCache
+				constant.TaskPollMaxFailures = previousMaxFailures
+				GetTaskAdaptorFunc = previousFactory
+			})
+
+			const channelID = 113
+			baseURL := "https://gateway.example"
+			channel := &model.Channel{Id: channelID, Type: constant.ChannelTypeNewAPI, Name: "rotating_gateway", Key: submittedKey, Status: common.ChannelStatusEnabled, BaseURL: &baseURL}
+			channel.SetOtherSettings(dto.ChannelOtherSettings{DisableTaskPollingSleep: true})
+			require.NoError(t, model.DB.Create(channel).Error)
+			task := model.InitTask(constant.TaskPlatform("kling"), &relaycommon.RelayInfo{
+				UserId: 1, UsingGroup: "default",
+				ChannelMeta:   &relaycommon.ChannelMeta{ChannelType: channel.Type, ChannelId: channelID, ApiKey: submittedKey},
+				TaskRelayInfo: &relaycommon.TaskRelayInfo{PublicTaskID: "task_identity_" + testCase.name},
+			})
+			if testCase.legacy {
+				task.PrivateData.Key = ""
+			}
+			task.PrivateData.UpstreamTaskID = "upstream_identity_" + testCase.name
+			task.Status, task.Progress = model.TaskStatusQueued, "10%"
+			task.SetData(map[string]any{"retained_payload": "before_auth_failure"})
+			require.NoError(t, model.DB.Create(task).Error)
+			require.NoError(t, model.DB.Model(channel).Update("key", rotatedKey).Error)
+
+			for round := range 2 {
+				var reloaded model.Task
+				require.NoError(t, model.DB.First(&reloaded, task.ID).Error)
+				upstreamID := reloaded.GetUpstreamTaskID()
+				require.NoError(t, UpdateVideoTasks(context.Background(), reloaded.Platform,
+					map[int][]string{channelID: {upstreamID}}, map[string]*model.Task{upstreamID: &reloaded}))
+				var persisted model.Task
+				require.NoError(t, model.DB.First(&persisted, task.ID).Error)
+				assert.Equal(t, task.TaskID, persisted.TaskID)
+				assert.Equal(t, task.PrivateData.Key, persisted.PrivateData.Key)
+				assert.Equal(t, testCase.status, persisted.Status)
+				assert.Equal(t, testCase.progress, persisted.Progress)
+				assert.Zero(t, persisted.FinishTime)
+				if testCase.statusCode != http.StatusOK {
+					assert.Equal(t, round+1, persisted.PrivateData.PollFailures)
+					assert.JSONEq(t, string(task.Data), string(persisted.Data), "auth denial must not consume the apparent successful response")
+				} else {
+					assert.Zero(t, persisted.PrivateData.PollFailures)
+				}
+				publicJSON, err := common.Marshal(persisted)
+				require.NoError(t, err)
+				assert.NotContains(t, string(publicJSON), "private_data")
+				assert.NotContains(t, string(publicJSON), submittedKey)
+				assert.NotContains(t, string(publicJSON), rotatedKey)
+			}
+			assert.Equal(t, []string{testCase.pollKey, testCase.pollKey}, adaptor.fetchedAPIKeys(), "poll retries must not switch to another identity after an auth denial")
+			assert.Equal(t, []string{task.GetUpstreamTaskID(), task.GetUpstreamTaskID()}, adaptor.fetchedTaskIDs())
+			assert.Zero(t, countLogs(t), "nonterminal polling must not finalize billing")
+		})
+	}
 }
 
 func TestDispatchPlatformUpdateUsesFetchMode(t *testing.T) {

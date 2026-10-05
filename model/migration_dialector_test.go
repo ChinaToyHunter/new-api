@@ -57,6 +57,21 @@ type migrationDecimalV3 struct {
 	Price float64 `gorm:"type:decimal(12,6);not null;default:1.25"`
 }
 
+// Matches the TaskPlugin schema shipped in v1.0.0-rc.38-th.22.
+type releasedTaskPlugin struct {
+	Id         int64
+	Key        string `gorm:"size:128;not null;uniqueIndex:uk_task_plugin_key_version,priority:1"`
+	APIVersion int    `gorm:"not null"`
+	Version    string `gorm:"size:64;not null;uniqueIndex:uk_task_plugin_key_version,priority:2"`
+	Source     string `gorm:"type:text;not null"`
+	SourceHash string `gorm:"size:64;not null"`
+	Icon       string `gorm:"size:524288"`
+	Enabled    bool   `gorm:"not null"`
+	Active     bool   `gorm:"not null;index"`
+	CreatedAt  int64  `gorm:"not null"`
+	Remark     string `gorm:"type:text"`
+}
+
 func TestMigrationSchemaStability(t *testing.T) {
 	for _, dialect := range []string{"sqlite", "mysql", "postgres"} {
 		t.Run(dialect, func(t *testing.T) {
@@ -83,6 +98,75 @@ func TestMigrationSchemaStability(t *testing.T) {
 			t.Cleanup(func() { _ = sqlDB.Close() })
 			recorder := &migrationSQLRecorder{}
 			db = db.Session(&gorm.Session{Logger: recorder})
+
+			t.Run("task_plugin_payloads", func(t *testing.T) {
+				for _, upgrade := range []bool{false, true} {
+					phase := "fresh"
+					if upgrade {
+						phase = "upgrade"
+					}
+					t.Run(phase, func(t *testing.T) {
+						const table = "migration_task_plugin_payloads"
+						t.Cleanup(func() { require.NoError(t, db.Migrator().DropTable(table)) })
+						tableDB := db.Table(table).Session(&gorm.Session{})
+						legacy := releasedTaskPlugin{
+							Key: "retained-plugin", APIVersion: 1, Version: "1.0.0",
+							Source: "export const label = '保留插件';", SourceHash: "released-hash",
+							Icon: "data:image/svg+xml;base64,PHN2Zy8+", Enabled: true, Active: true,
+							CreatedAt: 1700000000, Remark: "retained operator note",
+						}
+						if upgrade {
+							require.NoError(t, tableDB.AutoMigrate(&releasedTaskPlugin{}))
+							require.NoError(t, tableDB.Create(&legacy).Error)
+						}
+						require.NoError(t, tableDB.AutoMigrate(&TaskPlugin{}))
+						recorder.reset()
+						require.NoError(t, tableDB.AutoMigrate(&TaskPlugin{}))
+						assert.Empty(t, recorder.schemaMutations(), "repeated startup must not re-alter plugin payload columns")
+						columns, err := tableDB.Migrator().ColumnTypes(&TaskPlugin{})
+						require.NoError(t, err)
+						payloadTypes := map[string]string{}
+						for _, column := range columns {
+							if column.Name() == "source" || column.Name() == "icon" {
+								payloadTypes[column.Name()] = strings.ToLower(column.DatabaseTypeName())
+							}
+						}
+						expectedType := "text"
+						if dialect == "mysql" {
+							expectedType = "longtext"
+						}
+						assert.Equal(t, map[string]string{"source": expectedType, "icon": expectedType}, payloadTypes)
+						if upgrade {
+							var retained TaskPlugin
+							require.NoError(t, tableDB.First(&retained, legacy.Id).Error)
+							assert.Equal(t, TaskPlugin{
+								Id: legacy.Id, Key: legacy.Key, APIVersion: legacy.APIVersion, Version: legacy.Version,
+								Source: LongText(legacy.Source), SourceHash: legacy.SourceHash, Icon: LongText(legacy.Icon),
+								Enabled: legacy.Enabled, Active: legacy.Active, CreatedAt: legacy.CreatedAt, Remark: legacy.Remark,
+							}, retained)
+						}
+						large := TaskPlugin{
+							Key: legacy.Key, APIVersion: 1, Version: "2.0.0", SourceHash: "large-hash", Enabled: true,
+							Source: LongText(strings.Repeat("// plugin payload\n", 4096)),
+							Icon:   LongText("data:image/svg+xml;base64," + strings.Repeat("PHN2Zy8+", 10000)),
+						}
+						require.Greater(t, len(large.Source), 65535)
+						require.Greater(t, len(large.Icon), 65535)
+						require.NoError(t, tableDB.Create(&large).Error, "another version of the same plugin remains valid")
+						duplicate := large
+						duplicate.Id = 0
+						require.Error(t, tableDB.Create(&duplicate).Error, "plugin key/version uniqueness must survive migration")
+						recorder.reset()
+						require.NoError(t, tableDB.AutoMigrate(&TaskPlugin{}))
+						assert.Empty(t, recorder.schemaMutations())
+						var stored TaskPlugin
+						require.NoError(t, tableDB.First(&stored, large.Id).Error)
+						assert.Equal(t, large, stored, "large source and icon must round-trip across repeated migration")
+						assert.True(t, tableDB.Migrator().HasIndex(&TaskPlugin{}, "uk_task_plugin_key_version"))
+						assert.True(t, tableDB.Migrator().HasIndex(&TaskPlugin{}, "Active"), "active-version lookup index must survive migration")
+					})
+				}
+			})
 
 			t.Run("identity_and_indexes", func(t *testing.T) {
 				const table = "migration_identity_test"
