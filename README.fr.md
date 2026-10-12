@@ -28,6 +28,28 @@
 
 ---
 
+## 🤝 Partenaires de confiance
+
+<p align="center">
+  <a href="https://www.cherry-ai.com/" target="_blank">
+    <img src="./docs/images/cherry-studio.png" alt="Cherry Studio" height="80" />
+  </a><!--
+  --><a href="https://github.com/iOfficeAI/AionUi/" target="_blank">
+    <img src="./docs/images/aionui.png" alt="Aion UI" height="80" />
+  </a><!--
+  --><a href="https://bda.pku.edu.cn/" target="_blank">
+    <img src="./docs/images/pku.png" alt="Université de Pékin" height="80" />
+  </a><!--
+  --><a href="https://www.aliyun.com/" target="_blank">
+    <img src="./docs/images/aliyun.png" alt="Alibaba Cloud" height="80" />
+  </a><!--
+  --><a href="https://io.net/" target="_blank">
+    <img src="./docs/images/io-net.png" alt="IO.NET" height="80" />
+  </a>
+</p>
+
+---
+
 ## 🔀 À propos de ce fork
 
 Ce dépôt est un fork de développement secondaire de [QuantumNous/new-api](https://github.com/QuantumNous/new-api). Il suit `main` en amont et cette page ne documente que les fonctionnalités et corrections ajoutées par ce fork. Pour la documentation complète en amont, consultez [docs.newapi.pro](https://docs.newapi.pro/en/docs).

@@ -603,7 +603,7 @@ func TestUserBaseIncludesAuthorizationFields(t *testing.T) {
 }
 
 func TestUserUpdateBumpsAuthVersionOnlyForAuthorizationChanges(t *testing.T) {
-	setupUserSessionTest(t)
+	setupAccessTokenModelTest(t)
 	user := &User{
 		Username: "auth-version-user",
 		Password: "hashed-placeholder",

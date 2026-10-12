@@ -115,6 +115,48 @@ func drainClose(t *testing.T, resp *http.Response) {
 	require.NoError(t, resp.Body.Close())
 }
 
+func TestTransportTLSConfigIsolation(t *testing.T) {
+	withRelayHTTPTransportSettings(t)
+	previousInsecure := common.TLSInsecureSkipVerify
+	t.Cleanup(func() { common.TLSInsecureSkipVerify = previousInsecure })
+
+	for _, name := range []string{"relay", "protected_fetch", "explicit_config"} {
+		t.Run(name, func(t *testing.T) {
+			common.TLSInsecureSkipVerify = name != "explicit_config"
+			template := common.InsecureTLSConfig
+			var first, second *http.Transport
+			switch name {
+			case "relay":
+				first, second = newRelayHTTPTransport(), newRelayHTTPTransport()
+			case "protected_fetch":
+				protected := &ssrfProtectedRoundTripper{}
+				first, second = protected.newTransport(nil), protected.newTransport(nil)
+			case "explicit_config":
+				template = &tls.Config{ServerName: "upstream.example", MinVersion: tls.VersionTLS12}
+				factory, err := newTransportFactory(nil, template)
+				require.NoError(t, err)
+				first, second = factory(), factory()
+			}
+			t.Cleanup(first.CloseIdleConnections)
+			t.Cleanup(second.CloseIdleConnections)
+			require.NotNil(t, first.TLSClientConfig)
+			require.NotNil(t, second.TLSClientConfig)
+			require.NotSame(t, template, first.TLSClientConfig)
+			require.NotSame(t, template, second.TLSClientConfig)
+			require.NotSame(t, first.TLSClientConfig, second.TLSClientConfig)
+
+			first.TLSClientConfig.ServerName = "first.example"
+			first.TLSClientConfig.NextProtos = []string{"h2", "http/1.1"}
+			assert.Equal(t, template.ServerName, second.TLSClientConfig.ServerName)
+			assert.Equal(t, template.NextProtos, second.TLSClientConfig.NextProtos)
+			assert.NotEqual(t, "first.example", template.ServerName)
+			assert.Empty(t, template.NextProtos)
+			assert.Equal(t, template.InsecureSkipVerify, first.TLSClientConfig.InsecureSkipVerify)
+			assert.Equal(t, template.MinVersion, first.TLSClientConfig.MinVersion)
+		})
+	}
+}
+
 func TestAutoOneShardNegotiatesHTTP2SingleConnection(t *testing.T) {
 	withRelayHTTPTransportSettings(t)
 

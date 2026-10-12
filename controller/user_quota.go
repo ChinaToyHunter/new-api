@@ -65,7 +65,7 @@ func manageUserQuota(c *gin.Context, req ManageRequest) {
 			common.ApiError(c, err)
 		default:
 			params["failure_reason"] = "database_error"
-			common.ApiError(c, err)
+			common.ApiErrorI18n(c, i18n.MsgDatabaseError)
 		}
 		return
 	}

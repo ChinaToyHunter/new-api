@@ -3,8 +3,10 @@ package model
 import (
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/stretchr/testify/assert"
@@ -70,6 +72,250 @@ type releasedTaskPlugin struct {
 	Active     bool   `gorm:"not null;index"`
 	CreatedAt  int64  `gorm:"not null"`
 	Remark     string `gorm:"type:text"`
+}
+
+// Persisted authentication/account fields from v1.0.0-rc.38-th.22, not the
+// current User embedded into an "old" schema.
+type releasedAccessTokenUser struct {
+	Id                   int
+	Username             string         `gorm:"unique;index"`
+	Password             string         `gorm:"not null;"`
+	DisplayName          string         `gorm:"index"`
+	Role                 int            `gorm:"type:int;default:1"`
+	Status               int            `gorm:"type:int;default:1"`
+	Email                string         `gorm:"index"`
+	GitHubId             string         `gorm:"column:github_id;index"`
+	DiscordId            string         `gorm:"column:discord_id;index"`
+	OidcId               string         `gorm:"column:oidc_id;index"`
+	WeChatId             string         `gorm:"column:wechat_id;index"`
+	TelegramId           string         `gorm:"column:telegram_id;index"`
+	AccessToken          *string        `gorm:"type:char(32);column:access_token;uniqueIndex"`
+	AccessTokenCreatedAt *int64         `gorm:"type:bigint;column:access_token_created_at"`
+	Quota                int64          `gorm:"type:bigint;default:0"`
+	UsedQuota            int            `gorm:"type:int;default:0;column:used_quota"`
+	RequestCount         int            `gorm:"type:int;default:0;"`
+	Group                string         `gorm:"type:varchar(64);default:'default'"`
+	AffCode              string         `gorm:"type:varchar(32);column:aff_code;uniqueIndex"`
+	AffCount             int            `gorm:"type:int;default:0;column:aff_count"`
+	AffQuota             int            `gorm:"type:int;default:0;column:aff_quota"`
+	AffHistoryQuota      int            `gorm:"type:int;default:0;column:aff_history"`
+	InviterId            int            `gorm:"type:int;column:inviter_id;index"`
+	DeletedAt            gorm.DeletedAt `gorm:"index"`
+	LinuxDOId            string         `gorm:"column:linux_do_id;index"`
+	Setting              string         `gorm:"type:text;column:setting"`
+	Remark               string         `gorm:"type:varchar(255)"`
+	StripeCustomer       string         `gorm:"type:varchar(64);column:stripe_customer;index"`
+	CreatedAt            int64          `gorm:"autoCreateTime;column:created_at"`
+	LastLoginAt          int64          `gorm:"default:0;column:last_login_at"`
+	AuthVersion          int64          `gorm:"type:bigint;not null;default:1;column:auth_version"`
+}
+
+func (releasedAccessTokenUser) TableName() string { return "users" }
+
+type releasedAccessTokenOption struct {
+	Key   string `gorm:"primaryKey"`
+	Value string
+}
+
+func (releasedAccessTokenOption) TableName() string { return "options" }
+
+type releasedAccessTokenAuditLog struct {
+	Id         int
+	EventId    string `gorm:"type:varchar(64);uniqueIndex"`
+	UserId     int    `gorm:"index:idx_audit_user_time,priority:1"`
+	Username   string `gorm:"type:varchar(64);index"`
+	ActorRole  int
+	CreatedAt  int64  `gorm:"type:bigint;index:idx_audit_user_time,priority:2;index:idx_audit_token_time,priority:2;index"`
+	Category   string `gorm:"type:varchar(24);index"`
+	Action     string `gorm:"type:varchar(128)"`
+	TokenRef   string `gorm:"type:varchar(64);index:idx_audit_token_time,priority:1"`
+	AuthMethod string `gorm:"type:varchar(24)"`
+	Ip         string `gorm:"type:varchar(64)"`
+	UserAgent  string `gorm:"type:varchar(512)"`
+	Method     string `gorm:"type:varchar(16)"`
+	Route      string `gorm:"type:varchar(255)"`
+	Status     int
+	Success    bool
+	RequestId  string     `gorm:"type:varchar(64);index"`
+	Content    string     `gorm:"type:text"`
+	Other      AuditOther `gorm:"type:json"`
+}
+
+func (releasedAccessTokenAuditLog) TableName() string { return "audit_logs" }
+
+func TestAccessTokenMigrationDatabaseMatrix(t *testing.T) {
+	for _, dialect := range []string{"sqlite", "mysql", "postgres"} {
+		t.Run(dialect, func(t *testing.T) {
+			if dialect != "sqlite" && os.Getenv("TEST_"+strings.ToUpper(dialect)+"_DSN") == "" {
+				t.Skip("test database DSN is not configured")
+			}
+			for _, phase := range []string{"fresh", "upgrade"} {
+				t.Run(phase, func(t *testing.T) {
+					db := newAccessTokenTestDatabase(t, dialect)
+					logDB := newAccessTokenTestDatabase(t, dialect)
+					useAccessTokenTestDatabases(t, db, logDB)
+					t.Setenv("SKIP_64BIT_QUOTA_SCHEMA_CHECK", "false")
+					legacyToken := "0123456789abcdef0123456789abcdef"
+					legacyCreatedAt := int64(1_700_000_000)
+					retained := User{
+						Id: 7, Username: "released-pat-user", Password: "retained-hash", DisplayName: "保留用户",
+						Role: common.RoleCommonUser, Status: common.UserStatusEnabled, Email: "retained@example.com",
+						GitHubId: "retained-github", AccessToken: &legacyToken, AccessTokenCreatedAt: &legacyCreatedAt,
+						Quota: 4_500_000_123, UsedQuota: 456, RequestCount: 12, Group: "retained-account",
+						AffCode: "retained-aff", AffCount: 3, AffQuota: 123, AffHistoryQuota: 789,
+						Setting: `{"language":"zh"}`, Remark: "retained note", StripeCustomer: "retained-customer",
+						CreatedAt: legacyCreatedAt, LastLoginAt: legacyCreatedAt + 60, AuthVersion: 7,
+					}
+					shortLegacyToken := "AAECAwQFBgcICQoLDA0ODxAREhMU"
+					shortRetained := User{
+						Id: 8, Username: "released-short-pat", Password: "retained-short-hash",
+						Role: common.RoleCommonUser, Status: common.UserStatusEnabled,
+						AccessToken: &shortLegacyToken, AccessTokenCreatedAt: &legacyCreatedAt,
+						Quota: 4_500_000_124, Group: "retained-account", AffCode: "retained-short-aff",
+						CreatedAt: legacyCreatedAt, AuthVersion: 8,
+					}
+					var shortGeneration User
+					retainedAudit := AuditLog{
+						EventId: "retained-audit", UserId: retained.Id, Username: retained.Username, ActorRole: retained.Role,
+						CreatedAt: legacyCreatedAt, Category: AuditCategoryAccessToken, Action: "access_token.use",
+						TokenRef: AccessTokenFingerprint(legacyToken), AuthMethod: "access_token", Success: true,
+						RequestId: "retained-request", Other: AuditOther{LoginMethod: "password"},
+					}
+					retainedLog := Log{UserId: retained.Id, CreatedAt: legacyCreatedAt, Type: LogTypeConsume, Content: "retained usage", Quota: 123}
+					if phase == "upgrade" {
+						require.NoError(t, db.AutoMigrate(&releasedAccessTokenUser{}, &releasedAccessTokenOption{}))
+						legacy := releasedAccessTokenUser{
+							Id: retained.Id, Username: retained.Username, Password: retained.Password, DisplayName: retained.DisplayName,
+							Role: retained.Role, Status: retained.Status, Email: retained.Email, GitHubId: retained.GitHubId,
+							AccessToken: retained.AccessToken, AccessTokenCreatedAt: retained.AccessTokenCreatedAt, Quota: retained.Quota,
+							UsedQuota: retained.UsedQuota, RequestCount: retained.RequestCount, Group: retained.Group,
+							AffCode: retained.AffCode, AffCount: retained.AffCount, AffQuota: retained.AffQuota, AffHistoryQuota: retained.AffHistoryQuota,
+							Setting: retained.Setting, Remark: retained.Remark, StripeCustomer: retained.StripeCustomer,
+							CreatedAt: retained.CreatedAt, LastLoginAt: retained.LastLoginAt, AuthVersion: retained.AuthVersion,
+						}
+						require.NoError(t, db.Create(&legacy).Error)
+						shortLegacy := releasedAccessTokenUser{
+							Id: shortRetained.Id, Username: shortRetained.Username, Password: shortRetained.Password,
+							Role: shortRetained.Role, Status: shortRetained.Status, AccessToken: shortRetained.AccessToken,
+							AccessTokenCreatedAt: shortRetained.AccessTokenCreatedAt, Quota: shortRetained.Quota,
+							Group: shortRetained.Group, AffCode: shortRetained.AffCode,
+							CreatedAt: shortRetained.CreatedAt, AuthVersion: shortRetained.AuthVersion,
+						}
+						require.NoError(t, db.Create(&shortLegacy).Error)
+						shortGeneration = storedLegacyAccessTokenGeneration(t, shortRetained.Id)
+						require.NoError(t, db.Create(&releasedAccessTokenOption{Key: "RetainedSetting", Value: "retained-value"}).Error)
+						require.NoError(t, logDB.AutoMigrate(&releasedAccessTokenAuditLog{}, &Log{})) // Log is unchanged from the release.
+						require.NoError(t, logDB.Create(&retainedAudit).Error)
+						require.NoError(t, logDB.Create(&retainedLog).Error)
+						assert.False(t, db.Migrator().HasTable(&UserAccessToken{}))
+					}
+
+					if dialect == "mysql" {
+						require.NoError(t, checkMySQLChineseSupport(db))
+						require.NoError(t, checkMySQLChineseSupport(logDB))
+					}
+					require.NoError(t, ensureUserQuotaColumns(db, common.MainDatabaseType()), "startup must accept the released wallet schema")
+					before := time.Now().Unix()
+					require.NoError(t, migrateDB())
+					require.NoError(t, migrateLOGDB())
+					deadline := LegacyAccessTokenRetireAt()
+					assert.GreaterOrEqual(t, deadline, before+30*24*60*60)
+					assert.LessOrEqual(t, deadline, time.Now().Unix()+30*24*60*60)
+					if phase == "fresh" {
+						require.NoError(t, db.Create(&retained).Error)
+						require.NoError(t, db.Create(&shortRetained).Error)
+						shortGeneration = storedLegacyAccessTokenGeneration(t, shortRetained.Id)
+						require.NoError(t, logDB.Create(&retainedAudit).Error)
+						require.NoError(t, logDB.Create(&retainedLog).Error)
+					}
+					require.NotNil(t, shortGeneration.AccessToken)
+					assert.Equal(t, AccessTokenFingerprint(shortLegacyToken), AccessTokenFingerprint(shortGeneration.GetAccessToken()))
+					assert.Equal(t, AccessTokenHint(shortLegacyToken), AccessTokenHint(shortGeneration.GetAccessToken()))
+					require.NotNil(t, shortGeneration.AccessTokenCreatedAt)
+					assert.Equal(t, legacyCreatedAt, *shortGeneration.AccessTokenCreatedAt)
+					created := createTestUserAccessToken(t, retained.Id, "nap_migration_contract_token", before+3600)
+					mainRecorder, logRecorder := &migrationSQLRecorder{}, &migrationSQLRecorder{}
+					DB = db.Session(&gorm.Session{Logger: mainRecorder})
+					LOG_DB = logDB.Session(&gorm.Session{Logger: logRecorder})
+					require.NoError(t, ensureUserQuotaColumns(DB, common.MainDatabaseType()), "a second startup must accept the generated schema")
+					require.NoError(t, migrateDB())
+					require.NoError(t, migrateLOGDB())
+					assert.Empty(t, mainRecorder.schemaMutations(), "second startup must not change the main schema")
+					assert.Empty(t, logRecorder.schemaMutations(), "second startup must not change the separate log schema")
+					assert.Equal(t, deadline, LegacyAccessTokenRetireAt(), "restart must not extend the legacy transition")
+					require.NoError(t, EnsureLegacyAccessTokenRetireAt(before+24*60*60))
+					assert.Equal(t, deadline, LegacyAccessTokenRetireAt())
+					var storedDeadline Option
+					require.NoError(t, DB.Where(&Option{Key: legacyAccessTokenRetireAtKey}).First(&storedDeadline).Error)
+					assert.Equal(t, strconv.FormatInt(deadline, 10), storedDeadline.Value)
+					if phase == "upgrade" {
+						var option Option
+						require.NoError(t, DB.Where(&Option{Key: "RetainedSetting"}).First(&option).Error)
+						assert.Equal(t, "retained-value", option.Value)
+					}
+					var storedUser User
+					require.NoError(t, DB.First(&storedUser, retained.Id).Error)
+					assert.Equal(t, retained, storedUser, "wallet, legacy generation, authentication and account data must survive")
+					assert.Equal(t, shortGeneration, storedLegacyAccessTokenGeneration(t, shortRetained.Id), "the released 28-character generation must survive unchanged")
+					var storedShortUser User
+					require.NoError(t, DB.First(&storedShortUser, shortRetained.Id).Error)
+					expectedShortUser := shortRetained
+					expectedShortUser.AccessToken = shortGeneration.AccessToken
+					assert.Equal(t, expectedShortUser, storedShortUser)
+					for _, identity := range []struct {
+						token string
+						user  User
+					}{{legacyToken, retained}, {shortLegacyToken, shortRetained}} {
+						validated, err := ValidateAccessToken(identity.token)
+						require.NoError(t, err)
+						require.NotNil(t, validated)
+						assert.Equal(t, identity.user.Id, validated.Id)
+						assert.Equal(t, identity.user.AuthVersion, validated.AuthVersion)
+						assert.Empty(t, validated.Password)
+						assert.Nil(t, validated.AccessToken)
+					}
+					storedToken, err := GetUserAccessToken(retained.Id, created.Id)
+					require.NoError(t, err)
+					assert.Equal(t, created, *storedToken)
+					var storedAudit AuditLog
+					require.NoError(t, LOG_DB.First(&storedAudit, retainedAudit.Id).Error)
+					assert.Equal(t, retainedAudit, storedAudit)
+					var storedLog Log
+					require.NoError(t, LOG_DB.First(&storedLog, retainedLog.Id).Error)
+					assert.Equal(t, retainedLog, storedLog)
+					assert.False(t, LOG_DB.Migrator().HasTable(&User{}))
+					assert.False(t, LOG_DB.Migrator().HasTable(&UserAccessToken{}))
+					for _, index := range []string{"idx_users_username", "idx_users_access_token", "idx_users_aff_code"} {
+						assert.True(t, DB.Migrator().HasIndex(&User{}, index), index)
+					}
+					for _, index := range []string{"idx_user_access_tokens_user_id", "idx_user_access_tokens_token_hash", "idx_user_access_tokens_expires_at"} {
+						assert.True(t, DB.Migrator().HasIndex(&UserAccessToken{}, index), index)
+					}
+					for _, index := range []string{"idx_audit_logs_event_id", "idx_audit_user_time", "idx_audit_token_time"} {
+						assert.True(t, LOG_DB.Migrator().HasIndex(&AuditLog{}, index), index)
+					}
+					for _, field := range []string{"username", "access_token", "aff_code"} {
+						duplicate := User{Username: "other-user", Password: "hash", AffCode: "other-aff"}
+						switch field {
+						case "username":
+							duplicate.Username = retained.Username
+						case "access_token":
+							duplicate.AccessToken = retained.AccessToken
+						case "aff_code":
+							duplicate.AffCode = retained.AffCode
+						}
+						require.Error(t, DB.Create(&duplicate).Error, "released uniqueness must survive: %s", field)
+					}
+					duplicateToken := created
+					duplicateToken.Id = 0
+					require.Error(t, DB.Create(&duplicateToken).Error, "PAT fingerprint must remain unique")
+					duplicateAudit := retainedAudit
+					duplicateAudit.Id = 0
+					require.Error(t, LOG_DB.Create(&duplicateAudit).Error, "audit event identity must remain unique")
+				})
+			}
+		})
+	}
 }
 
 func TestMigrationSchemaStability(t *testing.T) {

@@ -28,6 +28,28 @@
 
 ---
 
+## 🤝 信頼できるパートナー
+
+<p align="center">
+  <a href="https://www.cherry-ai.com/" target="_blank">
+    <img src="./docs/images/cherry-studio.png" alt="Cherry Studio" height="80" />
+  </a><!--
+  --><a href="https://github.com/iOfficeAI/AionUi/" target="_blank">
+    <img src="./docs/images/aionui.png" alt="Aion UI" height="80" />
+  </a><!--
+  --><a href="https://bda.pku.edu.cn/" target="_blank">
+    <img src="./docs/images/pku.png" alt="北京大学" height="80" />
+  </a><!--
+  --><a href="https://www.aliyun.com/" target="_blank">
+    <img src="./docs/images/aliyun.png" alt="Alibaba Cloud" height="80" />
+  </a><!--
+  --><a href="https://io.net/" target="_blank">
+    <img src="./docs/images/io-net.png" alt="IO.NET" height="80" />
+  </a>
+</p>
+
+---
+
 ## 🔀 本バージョンについて
 
 本リポジトリは [QuantumNous/new-api](https://github.com/QuantumNous/new-api) の二次開発版です。上流の `main` を追従し、本ページではこの fork が追加・変更した機能と修正のみを説明します。上流の完全なドキュメントは [docs.newapi.pro](https://docs.newapi.pro/ja/docs) を参照してください。

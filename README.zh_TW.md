@@ -29,6 +29,28 @@
 
 ---
 
+## 🤝 我們信任的合作夥伴
+
+<p align="center">
+  <a href="https://www.cherry-ai.com/" target="_blank">
+    <img src="./docs/images/cherry-studio.png" alt="Cherry Studio" height="80" />
+  </a><!--
+  --><a href="https://github.com/iOfficeAI/AionUi/" target="_blank">
+    <img src="./docs/images/aionui.png" alt="Aion UI" height="80" />
+  </a><!--
+  --><a href="https://bda.pku.edu.cn/" target="_blank">
+    <img src="./docs/images/pku.png" alt="北京大學" height="80" />
+  </a><!--
+  --><a href="https://www.aliyun.com/" target="_blank">
+    <img src="./docs/images/aliyun.png" alt="阿里雲" height="80" />
+  </a><!--
+  --><a href="https://io.net/" target="_blank">
+    <img src="./docs/images/io-net.png" alt="IO.NET" height="80" />
+  </a>
+</p>
+
+---
+
 ## 🔀 本版本說明
 
 本倉庫是 [QuantumNous/new-api](https://github.com/QuantumNous/new-api) 的二次開發版本，跟隨上游 `main`，本文檔只記錄本版本新增或修改的內容。完整的上游功能和使用文檔請參考 [docs.newapi.pro](https://docs.newapi.pro/zh/docs)。
