@@ -122,7 +122,54 @@ describe('group settings workspace', () => {
       name: 'Account group ID',
     })
     expect(accountIds).toHaveLength(3)
-    expect(accountIds[2]).toHaveValue('account_1')
+    expect(accountIds[0]).toHaveValue('account_1')
+  })
+
+  it('prepends consecutive new account and route groups and saves them without changing existing settings', async () => {
+    const user = userEvent.setup()
+    const onSave = vi.fn(async (_values: typeof defaults) => {})
+    render(<Fixture onSave={onSave} />)
+
+    await user.click(screen.getByRole('button', { name: 'Add account group' }))
+    await user.click(screen.getByRole('button', { name: 'Add account group' }))
+    await user.click(screen.getByRole('button', { name: 'Add route group' }))
+    await user.click(screen.getByRole('button', { name: 'Add route group' }))
+    expect(
+      screen
+        .getAllByRole<HTMLInputElement>('textbox', { name: 'Account group ID' })
+        .map((input) => input.value)
+    ).toEqual(['account_2', 'account_1', 'default', 'vip'])
+    expect(
+      screen
+        .getAllByRole<HTMLInputElement>('textbox', { name: 'Route group ID' })
+        .map((input) => input.value)
+    ).toEqual(['route_2', 'route_1', 'default', 'vip'])
+
+    await user.click(
+      screen.getByRole('button', { name: 'Save group settings' })
+    )
+    await waitFor(() => expect(onSave).toHaveBeenCalled())
+    const saved = onSave.mock.calls[0][0]
+    expect(JSON.parse(saved.AccountGroups)).toEqual({
+      account_2: '',
+      account_1: '',
+      default: 'Standard account',
+      vip: 'Premium account',
+    })
+    expect(JSON.parse(saved.GroupRatio)).toEqual({
+      route_2: 1,
+      route_1: 1,
+      default: 1,
+      vip: 0.8,
+    })
+    expect(JSON.parse(saved.UserUsableGroups)).toEqual({
+      route_2: '',
+      route_1: '',
+      default: 'Standard access',
+      vip: 'Premium access',
+    })
+    expect(JSON.parse(saved.TopupGroupRatio)).toEqual({ vip: 1.2 })
+    expect(saved.AutoGroups).toBe(defaults.AutoGroups)
   })
 
   it('keeps unfinished visibility rules while switching sections and supports keyboard tabs', async () => {

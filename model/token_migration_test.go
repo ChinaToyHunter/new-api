@@ -293,3 +293,132 @@ func TestMigrateTokenKeyUniquenessPostgreSQL(t *testing.T) {
 		})
 	}
 }
+
+// tokenBeforeUserQuotaQuery is the tokens schema of v1.0.0-rc.38-th.22,
+// before the allow_user_quota_query column was added.
+type tokenBeforeUserQuotaQuery struct {
+	Id                 int            `json:"id"`
+	UserId             int            `json:"user_id" gorm:"index"`
+	Key                string         `json:"key" gorm:"type:varchar(128);uniqueIndex"`
+	Status             int            `json:"status" gorm:"default:1"`
+	Name               string         `json:"name" gorm:"index"`
+	CreatedTime        int64          `json:"created_time" gorm:"bigint"`
+	AccessedTime       int64          `json:"accessed_time" gorm:"bigint"`
+	ExpiredTime        int64          `json:"expired_time" gorm:"bigint;default:-1"`
+	RemainQuota        int            `json:"remain_quota" gorm:"default:0"`
+	UnlimitedQuota     bool           `json:"unlimited_quota"`
+	ModelLimitsEnabled bool           `json:"model_limits_enabled"`
+	ModelLimits        string         `json:"model_limits" gorm:"type:text"`
+	AllowIps           *string        `json:"allow_ips" gorm:"default:''"`
+	UsedQuota          int            `json:"used_quota" gorm:"default:0"`
+	Group              string         `json:"group" gorm:"default:''"`
+	CrossGroupRetry    bool           `json:"cross_group_retry"`
+	AutoGroups         string         `json:"-" gorm:"type:text"`
+	DeletedAt          gorm.DeletedAt `gorm:"index"`
+}
+
+func testTokenUserQuotaQueryMigration(t *testing.T, db *gorm.DB, recorder *migrationSQLRecorder) {
+	t.Helper()
+	const column = "allow_user_quota_query"
+	freshName := fmt.Sprintf("tok_uqq_fresh_%d", time.Now().UnixNano())
+	upgradeName := fmt.Sprintf("tok_uqq_upgrade_%d", time.Now().UnixNano())
+	t.Cleanup(func() {
+		_ = db.Migrator().DropTable(freshName)
+		_ = db.Migrator().DropTable(upgradeName)
+	})
+
+	require.NoError(t, db.Table(freshName).AutoMigrate(&Token{}))
+	require.True(t, db.Migrator().HasColumn(freshName, column))
+	require.NoError(t, db.Table(freshName).Create(&Token{UserId: 1, Key: "fresh-on", AllowUserQuotaQuery: true}).Error)
+	require.NoError(t, db.Table(freshName).Create(&Token{UserId: 1, Key: "fresh-off"}).Error)
+	var freshOn, freshOff Token
+	require.NoError(t, db.Table(freshName).Where(&Token{Key: "fresh-on"}).First(&freshOn).Error)
+	require.NoError(t, db.Table(freshName).Where(&Token{Key: "fresh-off"}).First(&freshOff).Error)
+	assert.True(t, freshOn.AllowUserQuotaQuery)
+	assert.False(t, freshOff.AllowUserQuotaQuery)
+	recorder.reset()
+	require.NoError(t, db.Table(freshName).AutoMigrate(&Token{}))
+	assert.Empty(t, recorder.schemaMutations(), "a repeated fresh migration must not repeat schema DDL")
+
+	allowIps := "203.0.113.0/24"
+	released := tokenBeforeUserQuotaQuery{
+		UserId: 7, Key: "released-key", Name: "released", Status: 1, CreatedTime: 1700000000, ExpiredTime: -1,
+		RemainQuota: 500, UsedQuota: 12, ModelLimits: "gpt-test", AllowIps: &allowIps, Group: "auto",
+		CrossGroupRetry: true, AutoGroups: `["default"]`,
+	}
+	require.NoError(t, db.Table(upgradeName).AutoMigrate(&tokenBeforeUserQuotaQuery{}))
+	require.False(t, db.Migrator().HasColumn(upgradeName, column))
+	require.NoError(t, db.Table(upgradeName).Create(&released).Error)
+	require.NoError(t, db.Table(upgradeName).AutoMigrate(&Token{}))
+	require.True(t, db.Migrator().HasColumn(upgradeName, column))
+	var migrated Token
+	require.NoError(t, db.Table(upgradeName).First(&migrated, released.Id).Error)
+	assert.False(t, migrated.AllowUserQuotaQuery, "tokens created before the switch stay off")
+	assert.Equal(t, released.UserId, migrated.UserId)
+	assert.Equal(t, released.Key, migrated.Key)
+	assert.Equal(t, released.Name, migrated.Name)
+	assert.Equal(t, released.RemainQuota, migrated.RemainQuota)
+	assert.Equal(t, released.UsedQuota, migrated.UsedQuota)
+	assert.Equal(t, released.ModelLimits, migrated.ModelLimits)
+	require.NotNil(t, migrated.AllowIps)
+	assert.Equal(t, allowIps, *migrated.AllowIps)
+	assert.Equal(t, released.Group, migrated.Group)
+	assert.True(t, migrated.CrossGroupRetry)
+	assert.Equal(t, released.AutoGroups, migrated.AutoGroups)
+	recorder.reset()
+	require.NoError(t, db.Table(upgradeName).AutoMigrate(&Token{}))
+	assert.Empty(t, recorder.schemaMutations(), "a repeated upgrade migration must not repeat schema DDL")
+
+	// The upgraded column accepts both values, including an explicit false.
+	for _, value := range []bool{true, false} {
+		require.NoError(t, db.Table(upgradeName).Where("id = ?", released.Id).Update(column, value).Error)
+		require.NoError(t, db.Table(upgradeName).First(&migrated, released.Id).Error)
+		assert.Equal(t, value, migrated.AllowUserQuotaQuery)
+	}
+	require.Error(t, db.Table(upgradeName).Create(&Token{UserId: 8, Key: released.Key}).Error, "the unique key index must survive the upgrade")
+	for _, tableName := range []string{freshName, upgradeName} {
+		for _, indexColumn := range []string{"key", "user_id", "name", "deleted_at"} {
+			assert.True(t, db.Migrator().HasIndex(tableName, db.NamingStrategy.IndexName(tableName, indexColumn)),
+				"%s must keep its %s index", tableName, indexColumn)
+		}
+	}
+}
+
+func TestTokenUserQuotaQueryMigrationSQLite(t *testing.T) {
+	recorder := &migrationSQLRecorder{}
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{Logger: recorder})
+	require.NoError(t, err)
+	// Each new connection to ":memory:" is a separate database, so keep one.
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	sqlDB.SetMaxOpenConns(1)
+	testTokenUserQuotaQueryMigration(t, db, recorder)
+}
+
+func TestTokenUserQuotaQueryMigrationConfiguredDatabases(t *testing.T) {
+	tests := []struct {
+		name      string
+		env       string
+		dialector func(string) gorm.Dialector
+	}{
+		{name: "mysql", env: "TEST_MYSQL_DSN", dialector: func(dsn string) gorm.Dialector { return mysql.Open(dsn) }},
+		{name: "postgres", env: "TEST_POSTGRES_DSN", dialector: func(dsn string) gorm.Dialector {
+			return postgres.New(postgres.Config{DSN: dsn, PreferSimpleProtocol: true})
+		}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			dsn := strings.TrimSpace(os.Getenv(test.env))
+			if dsn == "" {
+				t.Skip(test.env + " is not configured")
+			}
+			recorder := &migrationSQLRecorder{}
+			db, err := gorm.Open(test.dialector(dsn), &gorm.Config{Logger: recorder})
+			require.NoError(t, err)
+			sqlDB, err := db.DB()
+			require.NoError(t, err)
+			t.Cleanup(func() { _ = sqlDB.Close() })
+			testTokenUserQuotaQueryMigration(t, db, recorder)
+		})
+	}
+}

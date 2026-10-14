@@ -488,13 +488,13 @@ export const GroupRatioVisualEditor = memo(function GroupRatioVisualEditor(
       name = `account_${index}`
     }
     emitAccountRows([
-      ...accountRows,
       {
         _id: createRowId('account'),
         name,
         description: '',
         topupRatio: '',
       },
+      ...accountRows,
     ])
   }, [accountRows, emitAccountRows])
 
@@ -542,7 +542,6 @@ export const GroupRatioVisualEditor = memo(function GroupRatioVisualEditor(
       name = `route_${index}`
     }
     emitRouteRows([
-      ...routeRows,
       {
         _id: createRowId('route'),
         name,
@@ -550,6 +549,7 @@ export const GroupRatioVisualEditor = memo(function GroupRatioVisualEditor(
         ratio: '1',
         selectable: true,
       },
+      ...routeRows,
     ])
   }, [emitRouteRows, routeRows])
 

@@ -40,6 +40,7 @@ export function getApiKeyFormSchema(t: TFunction, maxAutoGroups = 5) {
       unlimited_quota: z.boolean(),
       model_limits: z.array(z.string()),
       allow_ips: z.string().optional(),
+      allow_user_quota_query: z.boolean(),
       group: z.string().optional(),
       auto_groups_mode: z.enum(['inherit', 'custom']),
       auto_groups: z.array(z.string()),
@@ -110,6 +111,7 @@ export const API_KEY_FORM_DEFAULT_VALUES: ApiKeyFormValues = {
   unlimited_quota: true,
   model_limits: [],
   allow_ips: '',
+  allow_user_quota_query: true,
   group: 'auto',
   auto_groups_mode: 'inherit',
   auto_groups: [],
@@ -147,6 +149,7 @@ export function transformFormDataToPayload(
     model_limits_enabled: data.model_limits.length > 0,
     model_limits: data.model_limits.join(','),
     allow_ips: data.allow_ips || '',
+    allow_user_quota_query: data.allow_user_quota_query,
     // 提交契约：空组表示保留 legacy 继承（更新）或由后端规范化（创建端亦接受 auto 默认）。
     group: data.group || '',
     auto_groups:
@@ -186,6 +189,7 @@ export function transformApiKeyToFormDefaults(
       ? apiKey.model_limits.split(',').filter(Boolean)
       : [],
     allow_ips: apiKey.allow_ips || '',
+    allow_user_quota_query: !!apiKey.allow_user_quota_query,
     // 空值是历史 legacy 令牌（继承账户组），保留哨兵而不是静默映射为 auto。
     group: apiKey.group || LEGACY_INHERIT_GROUP,
     auto_groups_mode: autoGroupsMode,

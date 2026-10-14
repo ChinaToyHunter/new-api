@@ -367,6 +367,7 @@ func Register(c *gin.Context) {
 			UnlimitedQuota:     true,
 			ModelLimitsEnabled: false,
 		}
+		token.AllowUserQuotaQuery = true
 		if setting.DefaultUseAutoGroup {
 			token.Group = "auto"
 		}
