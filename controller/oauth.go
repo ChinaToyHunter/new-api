@@ -3,7 +3,6 @@ package controller
 import (
 	"encoding/json"
 	"errors"
-	"fmt"
 	"net/http"
 	"slices"
 	"strconv"
@@ -38,16 +37,16 @@ type oauthFlowPayload struct {
 	Authorization   *model.AuthFlowAuthorization   `json:"authorization,omitempty"`
 }
 
-// providerParams returns map with Provider key for i18n templates
+// providerParams returns the params of messages that name the OAuth provider.
 func providerParams(name string) map[string]any {
-	return map[string]any{"Provider": name}
+	return map[string]any{"provider": name}
 }
 
 // GenerateOAuthCode generates a state code for OAuth CSRF protection
 func GenerateOAuthCode(c *gin.Context) {
 	var request oauthStateRequest
 	if err := common.DecodeJson(c.Request.Body, &request); err != nil {
-		common.ApiErrorI18n(c, i18n.MsgInvalidParams)
+		common.ApiErrorT(c, "Invalid parameters")
 		return
 	}
 	request.Provider = strings.TrimSpace(request.Provider)
@@ -62,7 +61,7 @@ func GenerateOAuthCode(c *gin.Context) {
 		len(request.Aff) > 32 ||
 		(request.Intent != model.AuthFlowIntentLogin && request.Aff != "") ||
 		(request.Intent != model.AuthFlowIntentVerify && (request.Scope != "" || len(request.Context) != 0)) {
-		common.ApiErrorI18n(c, i18n.MsgInvalidParams)
+		common.ApiErrorT(c, "Invalid parameters")
 		return
 	}
 	userID := 0
@@ -80,7 +79,7 @@ func GenerateOAuthCode(c *gin.Context) {
 	if request.Intent == model.AuthFlowIntentBind || request.Intent == model.AuthFlowIntentVerify {
 		identity, ok := middleware.GetSessionAuthIdentity(c)
 		if !ok {
-			c.JSON(http.StatusUnauthorized, gin.H{"success": false, "message": "绑定操作需要登录"})
+			writeAccountStatusError(c, http.StatusUnauthorized, "Sign in to bind an account")
 			return
 		}
 		userID = identity.UserID
@@ -152,10 +151,7 @@ func HandleOAuth(c *gin.Context) {
 	providerName := c.Param("provider")
 	provider := oauth.GetProvider(providerName)
 	if provider == nil {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"success": false,
-			"message": i18n.T(c, i18n.MsgOAuthUnknownProvider),
-		})
+		writeAccountStatusError(c, http.StatusBadRequest, "Unknown OAuth provider")
 		return
 	}
 
@@ -166,10 +162,7 @@ func HandleOAuth(c *gin.Context) {
 		Provider: providerName,
 	})
 	if err != nil {
-		c.JSON(http.StatusForbidden, gin.H{
-			"success": false,
-			"message": i18n.T(c, i18n.MsgOAuthStateInvalid),
-		})
+		writeAccountStatusError(c, http.StatusForbidden, "State parameter is empty or mismatched")
 		return
 	}
 
@@ -188,10 +181,7 @@ func HandleOAuth(c *gin.Context) {
 	if pendingFlow.Intent == model.AuthFlowIntentBind || pendingFlow.Intent == model.AuthFlowIntentVerify {
 		identity, ok := middleware.GetSessionAuthIdentity(c)
 		if !ok || identity.UserID != pendingFlow.UserId || identity.SessionID != pendingFlow.SessionId {
-			c.JSON(http.StatusForbidden, gin.H{
-				"success": false,
-				"message": i18n.T(c, i18n.MsgOAuthStateInvalid),
-			})
+			writeAccountStatusError(c, http.StatusForbidden, "State parameter is empty or mismatched")
 			return
 		}
 		consumeMatch.UserId = identity.UserID
@@ -213,7 +203,7 @@ func HandleOAuth(c *gin.Context) {
 			}
 		}
 	} else if pendingFlow.Intent != model.AuthFlowIntentLogin {
-		common.ApiErrorI18n(c, i18n.MsgInvalidParams)
+		common.ApiErrorT(c, "Invalid parameters")
 		return
 	}
 
@@ -242,7 +232,7 @@ func HandleOAuth(c *gin.Context) {
 		c.Set(oauth.TelegramOAuthFlowContextKey, telegramPayload.Telegram)
 	}
 	if !provider.IsEnabled() {
-		common.ApiErrorI18n(c, i18n.MsgOAuthNotEnabled, providerParams(provider.GetName()))
+		common.ApiErrorT(c, "{{provider}} login and registration has not been enabled by administrator", providerParams(provider.GetName()))
 		return
 	}
 
@@ -250,7 +240,7 @@ func HandleOAuth(c *gin.Context) {
 	errorCode := c.Query("error")
 	if errorCode != "" {
 		if _, err := model.ConsumeAuthFlow(state, consumeMatch); err != nil {
-			c.JSON(http.StatusForbidden, gin.H{"success": false, "message": i18n.T(c, i18n.MsgOAuthStateInvalid)})
+			writeAccountStatusError(c, http.StatusForbidden, "State parameter is empty or mismatched")
 			return
 		}
 		errorDescription := c.Query("error_description")
@@ -291,7 +281,7 @@ func HandleOAuth(c *gin.Context) {
 	}
 	flow, err := model.ConsumeAuthFlow(state, consumeMatch)
 	if err != nil {
-		c.JSON(http.StatusForbidden, gin.H{"success": false, "message": i18n.T(c, i18n.MsgOAuthStateInvalid)})
+		writeAccountStatusError(c, http.StatusForbidden, "State parameter is empty or mismatched")
 		return
 	}
 
@@ -329,18 +319,18 @@ func handleOAuthLogin(c *gin.Context, provider oauth.Provider, oauthUser *oauth.
 	user, migration, err := findOrCreateOAuthUser(c, provider, oauthUser, token, payload.AffiliateCode)
 	if err != nil {
 		if errors.Is(err, model.ErrEmailAlreadyTaken) {
-			common.ApiErrorI18n(c, i18n.MsgUserEmailAlreadyTaken)
+			common.ApiErrorT(c, "Email address is already in use")
 			return
 		}
 		switch err.(type) {
 		case *OAuthUserDeletedError:
-			common.ApiErrorI18n(c, i18n.MsgOAuthUserDeleted)
+			common.ApiErrorT(c, "User has been deleted")
 		case *OAuthRegistrationDisabledError:
-			common.ApiErrorI18n(c, i18n.MsgUserRegisterDisabled)
+			common.ApiErrorT(c, "New user registration has been disabled by administrator")
 		case *OAuthEmailAlreadyTakenError:
-			common.ApiErrorI18n(c, i18n.MsgUserEmailAlreadyTaken)
+			common.ApiErrorT(c, "Email address is already in use")
 		case *OAuthLegacyBindingNotConfirmedError:
-			common.ApiErrorI18n(c, i18n.MsgOAuthNotAutoLinked, providerParams(provider.GetName()))
+			common.ApiErrorT(c, "This {{provider}} account cannot be linked to an existing account automatically, please sign in or register another way and then link {{provider}} in account settings", providerParams(provider.GetName()))
 		default:
 			writeSecurityOperationError(c, err)
 		}
@@ -349,7 +339,7 @@ func handleOAuthLogin(c *gin.Context, provider oauth.Provider, oauthUser *oauth.
 
 	// 8. Check user status
 	if user.Status != common.UserStatusEnabled {
-		common.ApiErrorI18n(c, i18n.MsgOAuthUserBanned)
+		common.ApiErrorT(c, "User has been banned")
 		return
 	}
 
@@ -381,7 +371,7 @@ func handleOAuthBind(c *gin.Context, providerName string, provider oauth.Provide
 		return false, false
 	}
 	if provider.IsUserIDTaken(oauthUser.ProviderUserID) {
-		common.ApiErrorI18n(c, i18n.MsgOAuthAlreadyBound, providerParams(provider.GetName()))
+		common.ApiErrorT(c, "This {{provider}} account has already been bound", providerParams(provider.GetName()))
 		return false, false
 	}
 	_, err = model.ConsumeAuthFlowWithAction(state, match, func(tx *gorm.DB, _ *model.AuthFlow) error {
@@ -403,7 +393,7 @@ func handleOAuthBind(c *gin.Context, providerName string, provider oauth.Provide
 		return true, true
 	}
 	notificationFailed := service.NotifyAccountSecurityChange(user.Email, "Login account linked: "+provider.GetName()) != nil
-	common.ApiSuccessI18n(c, i18n.MsgOAuthBindSuccess, gin.H{"action": "bind", "notification_warning": notificationFailed})
+	common.ApiSuccessT(c, "Binding successful", gin.H{"action": "bind", "notification_warning": notificationFailed})
 	return true, notificationFailed
 }
 
@@ -458,7 +448,7 @@ func findOrCreateOAuthUser(c *gin.Context, provider oauth.Provider, oauthUser *o
 			if emailProvider, ok := provider.(oauth.VerifiedEmailProvider); ok && user.Email != "" {
 				emails, err := emailProvider.GetVerifiedEmails(c.Request.Context(), token)
 				if err != nil {
-					common.SysError(fmt.Sprintf("[OAuth] Failed to load verified emails for user %d: %s", user.Id, err.Error()))
+					common.SysError(common.LogText("[OAuth] Failed to load verified emails for user %d: %s", user.Id, err.Error()))
 					reason = "verified_emails_unavailable"
 				}
 				accountEmail := model.NormalizeEmail(user.Email)
@@ -629,19 +619,15 @@ func (e *OAuthLegacyBindingNotConfirmedError) Error() string {
 	return "legacy binding was not confirmed"
 }
 
-// handleOAuthError handles OAuth errors and returns translated message
+// handleOAuthError handles OAuth errors and returns a web console message
 func handleOAuthError(c *gin.Context, err error) {
 	switch e := err.(type) {
 	case *oauth.OAuthError:
-		if e.Params != nil {
-			common.ApiErrorI18n(c, e.MsgKey, e.Params)
-		} else {
-			common.ApiErrorI18n(c, e.MsgKey)
-		}
+		common.ApiError(c, e.Message)
 	case *oauth.AccessDeniedError:
 		common.ApiErrorMsg(c, e.Message)
 	case *oauth.TrustLevelError:
-		common.ApiErrorI18n(c, i18n.MsgOAuthTrustLevelLow)
+		common.ApiErrorT(c, "Linux DO trust level does not meet the minimum required by administrator")
 	case *oauth.AccountAgeError:
 		common.ApiErrorI18n(c, i18n.MsgOAuthAccountAgeLow)
 	case error:

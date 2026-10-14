@@ -17,7 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { createInstance } from 'i18next'
 import { I18nextProvider, initReactI18next } from 'react-i18next'
@@ -32,7 +32,10 @@ import { ApiKeysProvider } from '../api-keys-provider'
 const i18n = createInstance()
 await i18n.use(initReactI18next).init({
   lng: 'en',
-  resources: { en: { translation: {} } },
+  resources: {
+    en: { translation: { 'User group': 'User group' } },
+    zh: { translation: { 'User group': '用户分组' } },
+  },
 })
 
 type ApiMethod = (url: string, data?: unknown) => Promise<{ data: unknown }>
@@ -161,7 +164,10 @@ function findButton(text: string, required = true): HTMLButtonElement | null {
   return button ?? null
 }
 
-async function renderUpdateDrawer(apiKey: ApiKey): Promise<void> {
+async function renderUpdateDrawer(
+  apiKey: ApiKey,
+  routeGroups?: Record<string, { desc: string; ratio: number | string }>
+): Promise<void> {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   })
@@ -175,7 +181,7 @@ async function renderUpdateDrawer(apiKey: ApiKey): Promise<void> {
     ['user-route-groups'],
     {
       success: true,
-      data: {
+      data: routeGroups ?? {
         auto: { desc: 'Automatic routing', ratio: 'auto' },
         default: { desc: 'Standard access', ratio: 1 },
         vip: { desc: 'Priority access', ratio: 2 },
@@ -279,7 +285,10 @@ async function selectComboboxOption(
   await user.click(option)
 }
 
-afterEach(() => {
+afterEach(async () => {
+  await act(async () => {
+    await i18n.changeLanguage('en')
+  })
   apiClient.get = originalGet
   apiClient.post = originalPost
   apiClient.put = originalPut
@@ -291,6 +300,31 @@ afterEach(() => {
 })
 
 describe('API keys mutate drawer Auto group integration', () => {
+  test('updates built-in route descriptions on language changes while preserving custom descriptions', async () => {
+    const apiKey = legacyApiKey('legacy-shared')
+    const customDescription = 'Custom {{bad}} $t(User group)'
+    installApiFixtures([], [], apiKey)
+    await renderUpdateDrawer(apiKey, {
+      'legacy-shared': { desc: 'User group', ratio: 2 },
+      custom: { desc: customDescription, ratio: 1 },
+    })
+
+    const groupTrigger = getControlByLabel('Route group')
+    expect(groupTrigger).toHaveTextContent('User group')
+    await act(async () => {
+      await i18n.changeLanguage('zh')
+    })
+    await waitFor(() => expect(groupTrigger).toHaveTextContent('用户分组'))
+
+    const user = userEvent.setup()
+    await selectComboboxOption(groupTrigger, customDescription, user)
+    expect(groupTrigger).toHaveTextContent(customDescription)
+    await act(async () => {
+      await i18n.changeLanguage('en')
+    })
+    expect(groupTrigger).toHaveTextContent(customDescription)
+  })
+
   test('inherits the root Auto order and sends an empty override for every batch-created key', async () => {
     const createdPayloads: Array<Record<string, unknown>> = []
     installApiFixtures(createdPayloads)

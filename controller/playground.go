@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/middleware"
 	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
@@ -19,7 +20,7 @@ import (
 func setupPlaygroundRelayContext(c *gin.Context, relayInfo *relaycommon.RelayInfo) *types.NewAPIError {
 	useAccessToken := c.GetBool("use_access_token")
 	if useAccessToken {
-		return types.NewError(errors.New("暂不支持使用 access token"), types.ErrorCodeAccessDenied, types.ErrOptionWithSkipRetry())
+		return types.NewError(errors.New(i18n.T(c, i18n.MsgRelayAccessTokenUnsupported)), types.ErrorCodeAccessDenied, types.ErrOptionWithSkipRetry())
 	}
 
 	userId := c.GetInt("id")

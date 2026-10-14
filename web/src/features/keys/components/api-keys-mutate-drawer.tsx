@@ -66,7 +66,10 @@ import { RelatedPolicyLink } from '@/features/system-settings/request-policies/r
 import { getUserModels, getUserRouteGroups } from '@/lib/api'
 import { getCurrencyDisplay, getCurrencyLabel } from '@/lib/currency'
 import { handleServerError } from '@/lib/handle-server-error'
-import { requireServerSuccess } from '@/lib/server-error-message'
+import {
+  requireServerSuccess,
+  translateServerText,
+} from '@/lib/server-error-message'
 import { cn } from '@/lib/utils'
 
 import {
@@ -131,8 +134,7 @@ export function ApiKeysMutateDrawer({
     isFetching: groupsFetching,
   } = useQuery({
     queryKey: ['user-route-groups'],
-    queryFn: async () =>
-      requireServerSuccess(await getUserRouteGroups()),
+    queryFn: async () => requireServerSuccess(await getUserRouteGroups()),
     enabled: open,
     staleTime: 0,
   })
@@ -168,7 +170,7 @@ export function ApiKeysMutateDrawer({
     ).map(([key, info]) => ({
       value: key,
       label: key,
-      desc: info.desc || key,
+      desc: info.desc ? translateServerText(t, info.desc) : key,
       ratio: info.ratio,
     }))
     if (!routeGroups.some((group) => group.value === storedGroup)) {

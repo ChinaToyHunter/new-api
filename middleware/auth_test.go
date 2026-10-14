@@ -13,6 +13,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/service/authz"
@@ -206,6 +207,29 @@ func modelTestInitColumnsForMiddleware() {
 	// these package variables; the isolated middleware fixture must do the same.
 	// The model package exposes no test-only initializer, so a harmless SQLite
 	// query through the public token path is enough after the global type setup.
+}
+
+// Read-only API key routes (/api/usage/token, /api/log/token) are called by
+// scripts, not the web console, so their errors are translated by the backend
+// in the language the request asks for.
+func TestTokenAuthReadOnlyTranslatesErrors(t *testing.T) {
+	require.NoError(t, i18n.Init())
+	for _, tc := range []struct {
+		acceptLanguage string
+		want           string
+	}{
+		{"zh-CN", "未提供令牌"},
+		{"en-US", "Token not provided"},
+	} {
+		recorder := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(recorder)
+		c.Request = httptest.NewRequest(http.MethodGet, "/api/log/token", nil)
+		c.Request.Header.Set("Accept-Language", tc.acceptLanguage)
+		TokenAuthReadOnly()(c)
+		assert.True(t, c.IsAborted(), tc.acceptLanguage)
+		assert.Equal(t, http.StatusUnauthorized, recorder.Code, tc.acceptLanguage)
+		assert.JSONEq(t, `{"success":false,"message":"`+tc.want+`"}`, recorder.Body.String(), tc.acceptLanguage)
+	}
 }
 
 func TestUserAuthAllowsOpaqueDottedPAT(t *testing.T) {
@@ -487,7 +511,7 @@ func TestUserAuthAppliesAccessTokenRouteRules(t *testing.T) {
 		}{
 			{http.MethodPut, "/api/option/bulk", RootAuth(), false},
 			{http.MethodPost, "/api/option/waffo-pancake/catalog", RootAuth(), false},
-			{http.MethodGet, "/api/log/export", RootAuth(), false},
+			{http.MethodGet, "/api/log/export/csv", RootAuth(), false},
 			{http.MethodGet, "/api/account-groups/", AdminAuth(), false},
 			{http.MethodGet, "/api/route-groups/", AdminAuth(), false},
 			{http.MethodGet, "/api/system/update/check", RootAuth(), false},

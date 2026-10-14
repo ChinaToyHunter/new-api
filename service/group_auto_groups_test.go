@@ -70,7 +70,8 @@ func TestGetUserUsableGroupsKeepsSameNameLegacyRouteWhenConfigured(t *testing.T)
 
 	groups := GetUserUsableGroups("legacy-shared")
 
-	assert.Equal(t, "用户分组", groups["legacy-shared"])
+	assert.Equal(t, "User group", groups["legacy-shared"])
+	assert.Equal(t, "Default route", groups["default"])
 }
 
 func TestGetRequestAutoGroupsInheritedListIsNotLimited(t *testing.T) {

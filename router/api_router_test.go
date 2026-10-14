@@ -55,7 +55,7 @@ func expectedApiRoutes() []string {
 		// Fork-only, absent upstream: a sync must not drop these either.
 		http.MethodPut + " /api/option/bulk",
 		http.MethodPost + " /api/option/waffo-pancake/catalog",
-		http.MethodGet + " /api/log/export",
+		http.MethodGet + " /api/log/export/csv",
 		http.MethodGet + " /api/system/update/check",
 		http.MethodGet + " /api/system/update/releases",
 		http.MethodPost + " /api/system/update",

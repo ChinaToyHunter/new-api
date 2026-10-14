@@ -106,17 +106,18 @@ func TestLogModelNameFilterModes(t *testing.T) {
 	assert.Zero(t, zeroUserTotal)
 	assert.Empty(t, zeroUserLogs)
 
-	// The legacy wrapper keeps exact matching when no mode is supplied.
+	// An empty mode keeps the legacy contract: exact matching unless the
+	// caller explicitly includes a % wildcard.
 	legacyLogs, legacyTotal, err := GetAllLogs(
-		LogTypeUnknown, 0, 0, "gpt-4", "", "", 0, 100, 0, "", "", "",
+		LogFilter{Type: LogTypeUnknown, ModelName: "gpt-4"}, 0, 100,
 	)
 	require.NoError(t, err)
 	assert.Equal(t, int64(1), legacyTotal)
 	assert.Len(t, legacyLogs, 1)
 
-	// Explicit % remains supported for callers using the legacy API.
+	// Explicit % remains supported for callers relying on the legacy contract.
 	wildcardLogs, wildcardTotal, err := GetAllLogs(
-		LogTypeUnknown, 0, 0, "gpt-4%", "", "", 0, 100, 0, "", "", "",
+		LogFilter{Type: LogTypeUnknown, ModelName: "gpt-4%"}, 0, 100,
 	)
 	require.NoError(t, err)
 	assert.Equal(t, int64(2), wildcardTotal)

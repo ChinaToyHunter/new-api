@@ -59,6 +59,7 @@ import type { CommonLogFilters, ModelNameMode } from '../types'
 import { CommonLogsExportButton } from './common-logs-export-button'
 import { CommonLogsStats } from './common-logs-stats'
 import { CompactDateTimeRangePicker } from './compact-date-time-range-picker'
+import { ExportLogsDialog } from './dialogs/export-logs-dialog'
 import {
   LogsFilterField,
   LogsFilterInput,
@@ -231,8 +232,7 @@ export function CommonLogsFilterBar<TData>(
   const handleApply = useCallback(
     (nextFilters: CommonLogFilters = filters) => {
       const modelName = nextFilters.model?.trim() ?? ''
-      const modelNameMode =
-        nextFilters.modelNameMode ?? DEFAULT_MODEL_NAME_MODE
+      const modelNameMode = nextFilters.modelNameMode ?? DEFAULT_MODEL_NAME_MODE
       const modelNameLength = [...modelName].length
       if (
         modelName &&
@@ -593,6 +593,7 @@ export function CommonLogsFilterBar<TData>(
       compactMobile
       stats={statsBar}
       actionStart={sensitiveToggle}
+      actionEnd={<ExportLogsDialog />}
       primaryFilters={
         <>
           {dateRangeFilter}

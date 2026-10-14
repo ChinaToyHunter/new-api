@@ -27,7 +27,7 @@ func SubscriptionRequestWaffoPancakePay(c *gin.Context) {
 
 	var req SubscriptionWaffoPancakePayRequest
 	if err := c.ShouldBindJSON(&req); err != nil || req.PlanId <= 0 {
-		common.ApiErrorMsg(c, "参数错误")
+		common.ApiErrorT(c, "Invalid parameters")
 		return
 	}
 
@@ -37,11 +37,11 @@ func SubscriptionRequestWaffoPancakePay(c *gin.Context) {
 		return
 	}
 	if !plan.Enabled {
-		common.ApiErrorMsg(c, "套餐未启用")
+		common.ApiErrorT(c, "Subscription plan is not enabled")
 		return
 	}
 	if strings.TrimSpace(plan.WaffoPancakeProductId) == "" {
-		common.ApiErrorMsg(c, "该套餐未配置 WaffoPancakeProductId")
+		common.ApiErrorT(c, "WaffoPancakeProductId is not configured for this plan")
 		return
 	}
 	// Plan targets its own Pancake product, so we only require credentials
@@ -49,7 +49,7 @@ func SubscriptionRequestWaffoPancakePay(c *gin.Context) {
 	if strings.TrimSpace(setting.WaffoPancakeMerchantID) == "" ||
 		strings.TrimSpace(setting.WaffoPancakePrivateKey) == "" ||
 		strings.TrimSpace(setting.WaffoPancakeStoreID) == "" {
-		common.ApiErrorMsg(c, "Waffo Pancake 未完成配置或密钥无效")
+		common.ApiErrorT(c, "Waffo Pancake is not configured or key is invalid")
 		return
 	}
 
@@ -66,11 +66,11 @@ func SubscriptionRequestWaffoPancakePay(c *gin.Context) {
 			"Waffo Pancake 订阅商品配置校验失败 plan_id=%d product_id=%q store_id=%q error=%q",
 			plan.Id, plan.WaffoPancakeProductId, setting.WaffoPancakeStoreID, err.Error(),
 		))
-		common.ApiErrorMsg(c, "Waffo Pancake 商品配置无效，请联系管理员")
+		common.ApiErrorT(c, "Waffo Pancake configuration is incomplete")
 		return
 	}
 	if !strings.EqualFold(strings.TrimSpace(product.Currency), "USD") {
-		common.ApiErrorMsg(c, "订阅套餐目前仅支持 USD")
+		common.ApiErrorT(c, "Subscription plans currently only support USD")
 		return
 	}
 	planAmount := decimal.NewFromFloat(plan.PriceAmount).Round(2)
@@ -98,7 +98,7 @@ func SubscriptionRequestWaffoPancakePay(c *gin.Context) {
 		return
 	}
 	if user == nil {
-		common.ApiErrorMsg(c, "用户不存在")
+		common.ApiErrorT(c, "User does not exist")
 		return
 	}
 
@@ -109,7 +109,7 @@ func SubscriptionRequestWaffoPancakePay(c *gin.Context) {
 			return
 		}
 		if count >= int64(plan.MaxPurchasePerUser) {
-			common.ApiErrorMsg(c, "已达到该套餐购买上限")
+			common.ApiErrorT(c, "Purchase limit for this plan has been reached")
 			return
 		}
 	}
@@ -135,8 +135,8 @@ func SubscriptionRequestWaffoPancakePay(c *gin.Context) {
 		Status:                     common.TopUpStatusPending,
 	}
 	if err := order.Insert(); err != nil {
-		logger.LogError(c.Request.Context(), fmt.Sprintf("Waffo Pancake 订阅订单创建失败 user_id=%d plan_id=%d trade_no=%s error=%q", userId, plan.Id, tradeNo, err.Error()))
-		c.JSON(http.StatusOK, gin.H{"message": "error", "data": "创建订单失败"})
+		logger.LogError(c.Request.Context(), common.LogText("Waffo Pancake failed to create subscription order user_id=%d plan_id=%d trade_no=%s error=%q", userId, plan.Id, tradeNo, err.Error()))
+		paymentError(c, common.NewMessage("Failed to create order"))
 		return
 	}
 
@@ -154,11 +154,11 @@ func SubscriptionRequestWaffoPancakePay(c *gin.Context) {
 		OrderMerchantExternalID: tradeNo,
 	})
 	if err != nil {
-		logger.LogError(c.Request.Context(), fmt.Sprintf("Waffo Pancake 订阅结账会话创建失败 user_id=%d plan_id=%d trade_no=%s error=%q", userId, plan.Id, tradeNo, err.Error()))
+		logger.LogError(c.Request.Context(), common.LogText("Waffo Pancake failed to create subscription checkout session user_id=%d plan_id=%d trade_no=%s error=%q", userId, plan.Id, tradeNo, err.Error()))
 		c.JSON(http.StatusOK, gin.H{"message": "error", "data": "拉起支付失败"})
 		return
 	}
-	logger.LogInfo(c.Request.Context(), fmt.Sprintf("Waffo Pancake 订阅订单创建成功 user_id=%d plan_id=%d trade_no=%s session_id=%s money=%.2f", userId, plan.Id, tradeNo, session.SessionID, plan.PriceAmount))
+	logger.LogInfo(c.Request.Context(), common.LogText("Waffo Pancake subscription order created user_id=%d plan_id=%d trade_no=%s session_id=%s money=%.2f", userId, plan.Id, tradeNo, session.SessionID, plan.PriceAmount))
 
 	c.JSON(http.StatusOK, gin.H{
 		"message": "success",

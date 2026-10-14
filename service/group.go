@@ -35,7 +35,7 @@ func GetUserUsableGroups(userGroup string) map[string]string {
 		// Preserve same-name inheritance only when the account-group ID is
 		// also an independently configured routing/billing group.
 		if _, ok := groupsCopy[userGroup]; !ok && ratio_setting.ContainsGroupRatio(userGroup) {
-			groupsCopy[userGroup] = "用户分组"
+			groupsCopy[userGroup] = "User group"
 		}
 	}
 	return groupsCopy

@@ -43,6 +43,21 @@ function ThemeControls() {
   return (
     <>
       <output aria-label='Theme mode'>{theme.theme}</output>
+      <button type='button' onClick={() => customization.setFont('sans')}>
+        Sans font
+      </button>
+      <button type='button' onClick={() => customization.setFont('default')}>
+        Auto font
+      </button>
+      <button
+        type='button'
+        onClick={() => customization.setPreset('anthropic')}
+      >
+        Anthropic preset
+      </button>
+      <button type='button' onClick={() => customization.setPreset('default')}>
+        Default preset
+      </button>
       <button
         type='button'
         onClick={() => {
@@ -234,5 +249,55 @@ describe('theme preference persistence', () => {
       expect(localStorage.getItem(key)).toBe(value)
     }
     expect(localStorage.getItem('stale-ui-cache')).toBeNull()
+  })
+})
+
+describe('theme font selection', () => {
+  it('keeps manually selected Sans after remounting and switching presets', async () => {
+    const user = userEvent.setup()
+    const first = render(<ThemeFixture />)
+
+    await user.click(screen.getByRole('button', { name: 'Sans font' }))
+    first.unmount()
+    render(<ThemeFixture />)
+
+    expect(document.body).toHaveAttribute('data-theme-font', 'sans')
+    expect(localStorage.getItem('newapi:theme:v1:font')).toBe('sans')
+
+    await user.click(screen.getByRole('button', { name: 'Anthropic preset' }))
+
+    expect(document.body).toHaveAttribute('data-theme-font', 'sans')
+  })
+
+  it('restores the browser font after selecting Auto and remounting', async () => {
+    localStorage.setItem('newapi:theme:v1:font', 'sans')
+    const user = userEvent.setup()
+    const first = render(<ThemeFixture />)
+
+    // The fork defaults to the Anthropic preset, whose Auto font is serif.
+    await user.click(screen.getByRole('button', { name: 'Default preset' }))
+    await user.click(screen.getByRole('button', { name: 'Auto font' }))
+
+    expect(document.body).toHaveAttribute('data-theme-font', 'system')
+    expect(localStorage.getItem('newapi:theme:v1:font')).toBeNull()
+
+    first.unmount()
+    render(<ThemeFixture />)
+
+    expect(document.body).toHaveAttribute('data-theme-font', 'system')
+  })
+
+  it('uses the preset font in Auto and restores the browser font on the default preset', async () => {
+    const user = userEvent.setup()
+    render(<ThemeFixture />)
+
+    await user.click(screen.getByRole('button', { name: 'Anthropic preset' }))
+
+    expect(document.body).toHaveAttribute('data-theme-font', 'serif')
+
+    await user.click(screen.getByRole('button', { name: 'Default preset' }))
+
+    expect(document.body).toHaveAttribute('data-theme-font', 'system')
+    expect(localStorage.getItem('newapi:theme:v1:font')).toBeNull()
   })
 })
