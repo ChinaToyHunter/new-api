@@ -134,6 +134,36 @@ it.each(['cache', 'link'] as const)(
   }
 )
 
+it.each(['cache', 'link'] as const)(
+  'submits the unchanged invitation prefilled from %s even if the cached code changes',
+  async (source) => {
+    window.localStorage.setItem('aff', 'CACHED-INVITE')
+    if (source === 'link') {
+      window.history.replaceState(null, '', '/sign-up?aff=LINK-INVITE')
+    }
+    renderSignUp()
+    const user = userEvent.setup()
+    const expectedInvitation =
+      source === 'link' ? 'LINK-INVITE' : 'CACHED-INVITE'
+    expect(
+      await screen.findByLabelText('Invitation code (optional)')
+    ).toHaveValue(expectedInvitation)
+    window.localStorage.setItem('aff', 'OTHER-TAB-INVITE')
+
+    await fillRegistrationCredentials(user)
+    await user.click(screen.getByRole('button', { name: 'Create account' }))
+
+    await waitFor(() =>
+      expect(api.post).toHaveBeenCalledWith(
+        '/api/user/register',
+        expect.objectContaining({ aff_code: expectedInvitation }),
+        expect.any(Object)
+      )
+    )
+    expect(getAffiliateCode()).toBe(expectedInvitation)
+  }
+)
+
 it('keeps a whitespace-only invitation empty even if another tab changes the cached code', async () => {
   renderSignUp()
   const user = userEvent.setup()
