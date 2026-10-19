@@ -175,7 +175,7 @@ export function SignUpForm({
       form.setError('affCode', { message: t('Invitation code is required') })
       return
     }
-    if (invitationVisible && manualAffCode) {
+    if (invitationVisible) {
       saveAffiliateCode(manualAffCode)
     }
 
@@ -188,9 +188,7 @@ export function SignUpForm({
         password: data.password,
         email: data.email || undefined,
         verification_code: verificationCode || undefined,
-        aff_code: invitationVisible
-          ? manualAffCode || getAffiliateCode()
-          : undefined,
+        aff_code: invitationVisible ? manualAffCode : undefined,
         turnstile: turnstileToken,
       })
 
@@ -243,7 +241,7 @@ export function SignUpForm({
     try {
       const res = await wechatLoginByCode(
         wechatCode,
-        invitationVisible ? invitationValue || getAffiliateCode() : undefined
+        invitationVisible ? invitationValue : undefined
       )
       if (res?.success) {
         handleWeChatDialogChange(false)
@@ -395,8 +393,7 @@ export function SignUpForm({
                     {...field}
                     onChange={(event) => {
                       field.onChange(event)
-                      const value = event.target.value.trim()
-                      if (value) saveAffiliateCode(value)
+                      saveAffiliateCode(event.target.value.trim())
                     }}
                   />
                 </FormControl>
