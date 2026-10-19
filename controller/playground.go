@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/middleware"
 	"github.com/QuantumNous/new-api/model"
@@ -44,7 +45,7 @@ func setupPlaygroundRelayContext(c *gin.Context, relayInfo *relaycommon.RelayInf
 // respondPlaygroundError writes a relay error in OpenAI error shape.
 func respondPlaygroundError(c *gin.Context, newAPIError *types.NewAPIError) {
 	c.JSON(newAPIError.StatusCode, gin.H{
-		"error": newAPIError.ToOpenAIError(),
+		"error": newAPIError.ToOpenAIError(common.UpstreamAddresses(c)...),
 	})
 }
 

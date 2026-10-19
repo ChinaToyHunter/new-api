@@ -136,7 +136,7 @@ export function applyStreamingChunk(
  */
 export function finalizeMessage(
   message: Message,
-  apiReasoningContent?: string
+  apiReasoningContent?: string | null
 ): Message {
   const currentVersion = getCurrentVersion(message)
   const parsedThinkTags = currentVersion.content.includes('<think>')
@@ -209,7 +209,7 @@ export function applyChatCompletionChoice(
   return completeAssistantTiming({
     ...finalizeMessage(
       updateCurrentVersionContent(message, choice.message?.content || ''),
-      choice.message?.reasoning_content
+      choice.message?.reasoning_content ?? choice.message?.reasoning
     ),
     sources: mergeSources(message.sources, sources),
     status: MESSAGE_STATUS.COMPLETE,
