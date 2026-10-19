@@ -25,6 +25,15 @@ import { beforeEach, beforeAll, describe, expect, test, vi } from 'vitest'
 import { STORAGE_KEYS } from '../../constants'
 import { Playground } from '../../index'
 
+import { useAuthStore } from '@/stores/auth-store'
+
+const TEST_USER_ID = 1
+
+// Playground storage is scoped per account, so every key carries the user id.
+function userKey(key: string): string {
+  return `${key}:${TEST_USER_ID}`
+}
+
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: { retry: false },
@@ -65,6 +74,11 @@ beforeAll(() => {
 beforeEach(() => {
   localStorage.clear()
   queryClient.clear()
+  useAuthStore.getState().auth.setUser({
+    id: TEST_USER_ID,
+    username: 'playground-user',
+    role: 1,
+  })
 })
 
 describe('Playground mode switching', () => {
@@ -96,7 +110,7 @@ describe('Playground mode switching', () => {
   test('defaults to chat mode and switches to image without clearing chat config', async () => {
     const user = userEvent.setup()
     localStorage.setItem(
-      STORAGE_KEYS.CONFIG,
+      userKey(STORAGE_KEYS.CONFIG),
       JSON.stringify({
         version: 1,
         data: { model: 'gpt-4o', group: 'default' },
@@ -120,7 +134,7 @@ describe('Playground mode switching', () => {
     expect(chatTab).toHaveAttribute('aria-selected', 'true')
 
     const stored = JSON.parse(
-      localStorage.getItem(STORAGE_KEYS.CONFIG) ?? '{}'
+      localStorage.getItem(userKey(STORAGE_KEYS.CONFIG)) ?? '{}'
     ) as { data?: { model?: string } }
     expect(stored.data?.model).toBe('gpt-4o')
   })
@@ -133,6 +147,6 @@ describe('Playground mode switching', () => {
       within(screen.getByRole('tablist')).getByRole('tab', { name: 'Image' })
     )
 
-    expect(localStorage.getItem(STORAGE_KEYS.IMAGE_CONFIG)).toBeNull()
+    expect(localStorage.getItem(userKey(STORAGE_KEYS.IMAGE_CONFIG))).toBeNull()
   })
 })

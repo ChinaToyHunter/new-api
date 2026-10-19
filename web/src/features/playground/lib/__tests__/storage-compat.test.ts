@@ -16,7 +16,9 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { afterEach, describe, expect, test, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
+
+import { useAuthStore } from '@/stores/auth-store'
 
 import { STORAGE_KEYS } from '../../constants'
 import {
@@ -28,15 +30,31 @@ import {
   saveConfig,
 } from '../storage/storage'
 
+const TEST_USER_ID = 1
+
+// Playground storage is scoped per account, so every key carries the user id.
+function userKey(key: string): string {
+  return `${key}:${TEST_USER_ID}`
+}
+
+beforeEach(() => {
+  useAuthStore.getState().auth.setUser({
+    id: TEST_USER_ID,
+    username: 'playground-user',
+    role: 1,
+  })
+})
+
 afterEach(() => {
   localStorage.clear()
   vi.restoreAllMocks()
+  useAuthStore.getState().auth.reset()
 })
 
 describe('playground storage compatibility', () => {
   test('v1 legacy unwrapped config loads and preserves messages', () => {
     localStorage.setItem(
-      STORAGE_KEYS.CONFIG,
+      userKey(STORAGE_KEYS.CONFIG),
       JSON.stringify({
         model: 'gpt-4o',
         group: 'default',
@@ -44,7 +62,7 @@ describe('playground storage compatibility', () => {
       })
     )
     localStorage.setItem(
-      STORAGE_KEYS.MESSAGES,
+      userKey(STORAGE_KEYS.MESSAGES),
       JSON.stringify([
         { key: 'm1', from: 'user', versions: [{ id: 'v1', content: 'hi' }] },
       ])
@@ -75,7 +93,7 @@ describe('playground storage compatibility', () => {
     })
 
     const raw = JSON.parse(
-      localStorage.getItem(STORAGE_KEYS.CONFIG) ?? '{}'
+      localStorage.getItem(userKey(STORAGE_KEYS.CONFIG)) ?? '{}'
     ) as { version: number; data: Record<string, unknown> }
     expect(raw.version).toBe(1)
     expect(raw.data.searchEnabled).toBe(false)
@@ -110,14 +128,14 @@ describe('playground storage compatibility', () => {
       response_format: 'auto',
     })
 
-    const raw = localStorage.getItem(STORAGE_KEYS.IMAGE_CONFIG) ?? ''
+    const raw = localStorage.getItem(userKey(STORAGE_KEYS.IMAGE_CONFIG)) ?? ''
     expect(raw).not.toContain('b64_json')
     expect(raw).not.toContain('data:image')
     expect(raw).not.toContain('http')
   })
 
   test('corrupt image config falls back to empty partial', () => {
-    localStorage.setItem(STORAGE_KEYS.IMAGE_CONFIG, '{not json')
+    localStorage.setItem(userKey(STORAGE_KEYS.IMAGE_CONFIG), '{not json')
     const errorSpy = vi
       .spyOn(console, 'error')
       .mockImplementation(() => undefined)
@@ -132,7 +150,7 @@ describe('playground storage compatibility', () => {
 
     clearPlaygroundData()
 
-    expect(localStorage.getItem(STORAGE_KEYS.IMAGE_CONFIG)).toBeNull()
-    expect(localStorage.getItem(STORAGE_KEYS.CONFIG)).toBeNull()
+    expect(localStorage.getItem(userKey(STORAGE_KEYS.IMAGE_CONFIG))).toBeNull()
+    expect(localStorage.getItem(userKey(STORAGE_KEYS.CONFIG))).toBeNull()
   })
 })
