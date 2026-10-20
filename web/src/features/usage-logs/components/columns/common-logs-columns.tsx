@@ -21,6 +21,7 @@ import { GitBranch, Sparkles, KeyRound } from 'lucide-react'
 import { useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { TruncatedCell } from '@/components/data-table'
 import { GroupBadge } from '@/components/group-badge'
 import { StatusBadge, type StatusBadgeProps } from '@/components/status-badge'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
@@ -801,6 +802,23 @@ export function useCommonLogsColumns(
             />
           )
         },
+      },
+
+      {
+        id: 'user_agent',
+        header: 'User-Agent',
+        accessorFn: (row) => parseLogOther(row.other)?.user_agent ?? '',
+        cell: ({ row }) => {
+          const userAgent = row.getValue('user_agent') as string
+          if (!userAgent) return null
+
+          return (
+            <TruncatedCell className='text-muted-foreground max-w-48'>
+              {userAgent}
+            </TruncatedCell>
+          )
+        },
+        size: 180,
       },
 
       {

@@ -45,6 +45,7 @@ const consumeLog: UsageLog = {
     cache_tokens: 1906,
     cache_creation_tokens_5m: 10,
     cache_creation_tokens_1h: 5,
+    user_agent: 'claude-cli/2.1.0 (external, cli)',
   }),
   request_id: 'req-1',
   upstream_request_id: '',
@@ -110,6 +111,7 @@ describe('usage log CSV export', () => {
       '$0.5',
       '3s',
       '203.0.113.9',
+      'claude-cli/2.1.0 (external, cli)',
       'req-1',
       '',
     ])
