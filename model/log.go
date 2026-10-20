@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/logger"
@@ -357,12 +358,33 @@ func RecordTopupLog(userId int, content *common.Message, callerIp string, paymen
 	}
 }
 
+// logUserAgentMaxRunes bounds the recorded client User-Agent like the
+// audit_logs.user_agent column.
+const logUserAgentMaxRunes = 512
+
+// setLogUserAgent records the client User-Agent of the request as log
+// metadata visible to the log owner, like the request IP.
+func setLogUserAgent(c *gin.Context, other *LogOther) {
+	if c == nil || c.Request == nil {
+		return
+	}
+	userAgent := c.Request.UserAgent()
+	if userAgent == "" {
+		return
+	}
+	if utf8.RuneCountInString(userAgent) > logUserAgentMaxRunes {
+		userAgent = string([]rune(userAgent)[:logUserAgentMaxRunes])
+	}
+	other.SetPublic("user_agent", userAgent)
+}
+
 func RecordErrorLog(c *gin.Context, userId int, channelId int, modelName string, tokenName string, content string, tokenId int, useTimeSeconds int,
 	isStream bool, group string, other *LogOther) {
 	logger.LogInfo(c, common.LogText("record error log: userId=%d, channelId=%d, modelName=%s, tokenName=%s, content=%s", userId, channelId, modelName, tokenName, common.LocalLogPreview(content)))
 	username := c.GetString("username")
 	requestId := c.GetString(common.RequestIdKey)
 	upstreamRequestId := c.GetString(common.UpstreamRequestIdKey)
+	setLogUserAgent(c, other)
 	otherStr := other.JSONString()
 	// 判断是否需要记录 IP
 	needRecordIp := false
@@ -429,6 +451,7 @@ func RecordConsumeLog(c *gin.Context, userId int, params RecordConsumeLogParams)
 	createdAt := common.GetTimestamp()
 	other := params.Other
 	content := other.setContent(params.Content)
+	setLogUserAgent(c, other)
 	otherStr := other.JSONString()
 	// 判断是否需要记录 IP
 	needRecordIp := false

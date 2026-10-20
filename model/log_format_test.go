@@ -1,13 +1,77 @@
 package model
 
 import (
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
 
+	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// TestRequestLogsRecordOwnerVisibleUserAgent verifies consume and error logs
+// store the client User-Agent where the log owner can see it, bounded like the
+// audit log column, and store nothing when the request sends none.
+func TestRequestLogsRecordOwnerVisibleUserAgent(t *testing.T) {
+	writers := []struct {
+		name  string
+		write func(c *gin.Context)
+	}{
+		{
+			name: "consume",
+			write: func(c *gin.Context) {
+				RecordConsumeLog(c, 1, RecordConsumeLogParams{ModelName: "gpt-4o-mini", Other: NewLogOther()})
+			},
+		},
+		{
+			name: "error",
+			write: func(c *gin.Context) {
+				RecordErrorLog(c, 1, 0, "gpt-4o-mini", "", "upstream error", 0, 0, false, "default", NewLogOther())
+			},
+		},
+	}
+	cases := []struct {
+		name      string
+		userAgent string
+		want      string
+	}{
+		{name: "client", userAgent: "claude-cli/2.1.0 (external, cli)", want: "claude-cli/2.1.0 (external, cli)"},
+		{name: "overlong", userAgent: strings.Repeat("界", logUserAgentMaxRunes+1), want: strings.Repeat("界", logUserAgentMaxRunes)},
+		{name: "absent", userAgent: "", want: ""},
+	}
+	for _, writer := range writers {
+		for _, tc := range cases {
+			t.Run(writer.name+"/"+tc.name, func(t *testing.T) {
+				truncateTables(t)
+				requestId := "ua-" + writer.name + "-" + tc.name
+				c, _ := gin.CreateTestContext(httptest.NewRecorder())
+				c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+				if tc.userAgent != "" {
+					c.Request.Header.Set("User-Agent", tc.userAgent)
+				}
+				c.Set(common.RequestIdKey, requestId)
+
+				writer.write(c)
+
+				var logs []*Log
+				require.NoError(t, LOG_DB.Where("request_id = ?", requestId).Find(&logs).Error)
+				require.Len(t, logs, 1)
+				formatUserLogs(logs, 0)
+				parsed, err := common.StrToMap(logs[0].Other)
+				require.NoError(t, err)
+				if tc.want == "" {
+					assert.NotContains(t, parsed, "user_agent")
+					return
+				}
+				assert.Equal(t, tc.want, parsed["user_agent"])
+			})
+		}
+	}
+}
 
 // TestFormatUserLogsStripsQuotaSaturation verifies the admin-only quota
 // saturation marker (nested under other.admin_info) is removed for non-admin
