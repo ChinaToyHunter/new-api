@@ -109,6 +109,20 @@ test('shows the recorded request and response models in log details', () => {
   queryClient.clear()
 })
 
+test('shows the recorded client user agent to the log owner in log details', () => {
+  const queryClient = renderDetails({
+    user_agent: 'claude-cli/2.1.0 (external, cli)',
+  })
+  expect(rowValue('User-Agent')).toBe('claude-cli/2.1.0 (external, cli)')
+  queryClient.clear()
+})
+
+test('omits the user agent row when the log recorded none', () => {
+  const queryClient = renderDetails({})
+  expect(screen.queryByText('User-Agent')).toBeNull()
+  queryClient.clear()
+})
+
 describe('usage facts billing details', () => {
   test('shows the settled image count and a per-image price', () => {
     const queryClient = renderDetails({
