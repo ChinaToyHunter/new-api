@@ -48,6 +48,14 @@ func GetEndpointTypesByChannelType(channelType int, modelName string) []constant
 			constant.EndpointTypeAnthropic,
 			constant.EndpointTypeGemini,
 		}
+	case constant.ChannelTypeOpenCodeZen, constant.ChannelTypeOpenCodeGo, constant.ChannelTypeCommandCode:
+		// Model-routed gateways accept all three protocols and convert to the
+		// one that serves the model upstream.
+		endpointTypes = []constant.EndpointType{
+			constant.EndpointTypeOpenAI,
+			constant.EndpointTypeOpenAIResponse,
+			constant.EndpointTypeAnthropic,
+		}
 	case constant.ChannelTypeCodex:
 		endpointTypes = []constant.EndpointType{
 			constant.EndpointTypeOpenAIResponse,

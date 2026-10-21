@@ -16,6 +16,7 @@ import (
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/jsplugin"
 	relaychannel "github.com/QuantumNous/new-api/relay/channel"
+	"github.com/QuantumNous/new-api/relay/channel/modelroute"
 	"github.com/QuantumNous/new-api/relay/channel/ollama"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relaykit/dto"
@@ -291,6 +292,9 @@ func buildFetchModelsHeaders(channel *model.Channel, key string) (http.Header, e
 		headers = GetClaudeAuthHeader(key)
 	default:
 		headers = GetAuthHeader(key)
+	}
+	if userAgent := modelroute.UpstreamUserAgent(channel.Type, channel.GetBaseURL()); userAgent != "" {
+		headers.Set("User-Agent", userAgent)
 	}
 
 	if err := applyFetchModelsHeaderOverrides(channel, key, headers); err != nil {

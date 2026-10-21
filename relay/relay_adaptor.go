@@ -25,6 +25,7 @@ import (
 	"github.com/QuantumNous/new-api/relay/channel/jina"
 	"github.com/QuantumNous/new-api/relay/channel/minimax"
 	"github.com/QuantumNous/new-api/relay/channel/mistral"
+	"github.com/QuantumNous/new-api/relay/channel/modelroute"
 	"github.com/QuantumNous/new-api/relay/channel/mokaai"
 	"github.com/QuantumNous/new-api/relay/channel/moonshot"
 	"github.com/QuantumNous/new-api/relay/channel/newapi"
@@ -126,6 +127,10 @@ func GetAdaptor(apiType int) channel.Adaptor {
 		return &newapi.Adaptor{}
 	case constant.APITypeVercel:
 		return &vercel.Adaptor{}
+	case constant.APITypeOpenCode:
+		return modelroute.NewAdaptor(constant.ChannelTypeOpenCodeGo)
+	case constant.APITypeCommandCode:
+		return modelroute.NewAdaptor(constant.ChannelTypeCommandCode)
 	}
 	return nil
 }

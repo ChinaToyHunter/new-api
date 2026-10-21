@@ -20,6 +20,7 @@ import (
 	"github.com/QuantumNous/new-api/pkg/jsplugin"
 	"github.com/QuantumNous/new-api/relay/channel/advancedcustom"
 	"github.com/QuantumNous/new-api/relay/channel/gemini"
+	"github.com/QuantumNous/new-api/relay/channel/modelroute"
 	"github.com/QuantumNous/new-api/relay/channel/ollama"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
@@ -433,6 +434,8 @@ func fetchChannelUpstreamModelIDs(channel *model.Channel) ([]string, error) {
 		} else {
 			url = fmt.Sprintf("%s/v1/models", baseURL)
 		}
+	case constant.ChannelTypeOpenCodeZen, constant.ChannelTypeOpenCodeGo, constant.ChannelTypeCommandCode:
+		url = modelroute.EndpointURL(baseURL, "/v1/models")
 	default:
 		url = fmt.Sprintf("%s/v1/models", baseURL)
 	}

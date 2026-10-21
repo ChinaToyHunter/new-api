@@ -42,6 +42,17 @@ func OaiResponsesToChatHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 	}
 
 	info.ObserveResponseModel(responsesResp.Model)
+	imageCounter := &relaycommon.ImageGenerationCallCounter{}
+	for i, output := range responsesResp.Output {
+		switch output.Type {
+		case dto.BuildInCallWebSearchCall, dto.BuildInCallFileSearchCall, dto.BuildInCallFunctionCall:
+			info.CountBillableToolCall(output.Type, output.Name)
+		}
+		imageCounter.Observe(&output, &i)
+	}
+	info.ApplyVendorToolUsage(body)
+	imageCounter.Commit(info)
+
 	responseValue, usage, err := convertResponsesResponseForClient(c, info, &responsesResp)
 	if err != nil {
 		return nil, types.NewOpenAIError(err, types.ErrorCodeBadResponseBody, http.StatusInternalServerError)
@@ -64,6 +75,9 @@ func OaiResponsesToChatBufferedStreamHandler(c *gin.Context, info *relaycommon.R
 	info.StreamStatus = relaycommon.NewStreamStatus()
 	info.StreamStatus.RequireTerminal()
 	accumulator := relayconvert.NewResponsesBufferedAccumulator()
+	// Retain upstream tool accounting; leave converted token usage unchanged.
+	usageAccumulator := service.NewResponsesUsageAccumulator(info)
+	defer usageAccumulator.Finish()
 	var finalResponse *dto.OpenAIResponsesResponse
 	var streamErr *types.NewAPIError
 
@@ -92,7 +106,7 @@ func OaiResponsesToChatBufferedStreamHandler(c *gin.Context, info *relaycommon.R
 		if streamResp.Response != nil {
 			info.ObserveResponseModel(streamResp.Response.Model)
 		}
-		service.ObserveResponsesOutcome(info, &streamResp)
+		usageAccumulator.Observe(&streamResp, common.StringToByteSlice(data))
 		accumulator.ProcessEvent(&streamResp)
 		switch streamResp.Type {
 		case "response.completed", "response.done", "response.incomplete":
@@ -187,6 +201,9 @@ func OaiResponsesToChatStreamHandler(c *gin.Context, info *relaycommon.RelayInfo
 		return nil, types.NewOpenAIError(err, types.ErrorCodeBadResponse, http.StatusInternalServerError)
 	}
 	streamErr := (*types.NewAPIError)(nil)
+	// Retain upstream tool accounting; leave converted token usage unchanged.
+	usageAccumulator := service.NewResponsesUsageAccumulator(info)
+	defer usageAccumulator.Finish()
 	// upstreamFailed records a response.failed / response.error event and
 	// failedUsage the usage it reported, if any.
 	upstreamFailed := false
@@ -279,6 +296,7 @@ func OaiResponsesToChatStreamHandler(c *gin.Context, info *relaycommon.RelayInfo
 		if streamResp.Response != nil {
 			info.ObserveResponseModel(streamResp.Response.Model)
 		}
+		usageAccumulator.Observe(&streamResp, common.StringToByteSlice(data))
 		if streamResp.Type == "response.error" || streamResp.Type == "response.failed" {
 			upstreamFailed = true
 			if streamResp.Response != nil {

@@ -22,6 +22,7 @@ import {
   CHANNEL_TYPE_OLLAMA,
   CLAUDE_FIELD_PASSTHROUGH_TYPES,
   MODEL_FETCHABLE_TYPES,
+  MODEL_ROUTED_CHANNEL_TYPES,
   OPENAI_FIELD_PASSTHROUGH_TYPES,
 } from '../constants'
 import { CHANNEL_TYPE_ADVANCED_CUSTOM } from './advanced-custom'
@@ -62,6 +63,7 @@ const CONFIGURATION_BLOCKS = {
       'pass_through_body_enabled',
       'responses_websocket_enabled',
       'ollama_openai_chat',
+      'model_protocol_rules',
       'system_prompt',
       'system_prompt_override',
     ],
@@ -158,6 +160,8 @@ export function getChannelConfigurationState(
       (supportsResponsesWebSocket(values.type) &&
         values.responses_websocket_enabled) ||
       (values.type === CHANNEL_TYPE_OLLAMA && values.ollama_openai_chat) ||
+      (MODEL_ROUTED_CHANNEL_TYPES.has(values.type) &&
+        hasConfiguredJson(values.model_protocol_rules)) ||
       values.system_prompt?.trim() ||
       values.system_prompt_override
     ),

@@ -57,6 +57,9 @@ export function getChannelTypeIcon(type: number): string {
     62: 'Vllm', // vLLM
     63: 'SGLang', // SGLang
     64: 'Vercel', // Vercel
+    65: 'OpenCode', // OpenCode Zen
+    66: 'OpenCode', // OpenCode Go
+    67: 'CommandCode', // Command Code (no Lobe icon; renders the initial)
     3: 'Azure', // Azure
 
     // Anthropic

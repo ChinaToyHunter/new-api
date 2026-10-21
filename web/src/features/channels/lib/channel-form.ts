@@ -29,6 +29,7 @@ import {
   ERROR_MESSAGES,
   FIELD_PASSTHROUGH_TYPES,
   MODEL_FETCHABLE_TYPES,
+  MODEL_ROUTED_CHANNEL_TYPES,
   OPENAI_FIELD_PASSTHROUGH_TYPES,
 } from '../constants'
 import type { Channel } from '../types'
@@ -156,6 +157,41 @@ function isOptionalStatusCodeMapping(value: string | undefined): boolean {
         toCode <= 599
       )
     })
+  } catch {
+    return false
+  }
+}
+
+const modelProtocolSchema = z.enum([
+  'chat_completions',
+  'responses',
+  'anthropic',
+])
+const modelProtocolRulesSchema = z
+  .array(
+    z
+      .object({
+        pattern: z
+          .string()
+          .trim()
+          .min(1)
+          .max(128)
+          .refine(
+            (pattern) => !/\s/u.test(pattern) && /^[^*]*\*?$/u.test(pattern)
+          ),
+        protocol: modelProtocolSchema.optional(),
+        protocols: z.array(modelProtocolSchema).optional(),
+      })
+      .refine((rule) => Boolean(rule.protocol || rule.protocols?.length))
+  )
+  .max(64)
+
+function isOptionalModelProtocolRules(value: string | undefined): boolean {
+  try {
+    const parsed = parseOptionalJson(value)
+    return (
+      parsed === undefined || modelProtocolRulesSchema.safeParse(parsed).success
+    )
   } catch {
     return false
   }
@@ -290,6 +326,7 @@ export const channelFormSchema = z
     allow_speed: z.boolean().optional(), // Anthropic: speed mode control
     claude_beta_query: z.boolean().optional(), // Anthropic: beta query passthrough
     ollama_openai_chat: z.boolean().optional(), // Ollama: OpenAI-compatible /v1/chat/completions instead of native /api/chat
+    model_protocol_rules: z.string().optional(),
     disable_task_polling_sleep: z.boolean().optional(),
     // Upstream model update settings (stored in settings JSON)
     upstream_model_update_check_enabled: z.boolean().optional(),
@@ -297,6 +334,16 @@ export const channelFormSchema = z
     upstream_model_update_ignored_models: z.string().optional(),
   })
   .superRefine((data, ctx) => {
+    if (
+      MODEL_ROUTED_CHANNEL_TYPES.has(data.type) &&
+      !isOptionalModelProtocolRules(data.model_protocol_rules)
+    ) {
+      addRequiredIssue(
+        ctx,
+        'model_protocol_rules',
+        'Model protocol rules must be a JSON array of at most 64 rules with an exact or trailing-* pattern and chat_completions, responses, or anthropic protocols'
+      )
+    }
     if (
       [
         3,
@@ -484,6 +531,7 @@ export const CHANNEL_FORM_DEFAULT_VALUES: ChannelFormValues = {
   allow_speed: false,
   claude_beta_query: false,
   ollama_openai_chat: false,
+  model_protocol_rules: '',
   disable_task_polling_sleep: false,
   upstream_model_update_check_enabled: false,
   upstream_model_update_auto_sync_enabled: false,
@@ -559,6 +607,7 @@ export function transformChannelToFormDefaults(
   let allowSpeed = false
   let claudeBetaQuery = false
   let ollamaOpenAIChat = false
+  let modelProtocolRules = ''
   let disableTaskPollingSleep = false
   let upstreamModelUpdateCheckEnabled = false
   let upstreamModelUpdateAutoSyncEnabled = false
@@ -581,6 +630,13 @@ export function transformChannelToFormDefaults(
       allowSpeed = parsed.allow_speed === true
       claudeBetaQuery = parsed.claude_beta_query === true
       ollamaOpenAIChat = parsed.ollama_openai_chat === true
+      if (parsed.model_protocol_rules != null) {
+        modelProtocolRules = JSON.stringify(
+          parsed.model_protocol_rules,
+          null,
+          2
+        )
+      }
       disableTaskPollingSleep = parsed.disable_task_polling_sleep === true
       upstreamModelUpdateCheckEnabled =
         parsed.upstream_model_update_check_enabled === true
@@ -642,6 +698,7 @@ export function transformChannelToFormDefaults(
     allow_speed: allowSpeed,
     claude_beta_query: claudeBetaQuery,
     ollama_openai_chat: ollamaOpenAIChat,
+    model_protocol_rules: modelProtocolRules,
     disable_task_polling_sleep: disableTaskPollingSleep,
     allow_safety_identifier: allowSafetyIdentifier,
     upstream_model_update_check_enabled: upstreamModelUpdateCheckEnabled,
@@ -803,6 +860,15 @@ function buildSettingsJSON(formData: ChannelFormValues): string {
     settingsObj.ollama_openai_chat = formData.ollama_openai_chat === true
   } else if ('ollama_openai_chat' in settingsObj) {
     delete settingsObj.ollama_openai_chat
+  }
+
+  if (
+    MODEL_ROUTED_CHANNEL_TYPES.has(formData.type) &&
+    formData.model_protocol_rules?.trim()
+  ) {
+    settingsObj.model_protocol_rules = JSON.parse(formData.model_protocol_rules)
+  } else {
+    delete settingsObj.model_protocol_rules
   }
 
   settingsObj.disable_task_polling_sleep =

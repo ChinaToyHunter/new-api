@@ -232,6 +232,7 @@ import {
   ModelMappingEditor,
   type ModelMappingDraftRequest,
 } from '../model-mapping-editor'
+import { ModelProtocolRulesSetting } from '../model-protocol-rules-setting'
 import { ModelRedirectPanel } from '../model-redirect-panel'
 import { ResponsesWebSocketSetting } from '../responses-websocket-setting'
 import { UpstreamModelSelection } from '../upstream-model-selection'
@@ -314,6 +315,7 @@ const SENSITIVE_FORM_FIELDS = [
   'allow_speed',
   'claude_beta_query',
   'ollama_openai_chat',
+  'model_protocol_rules',
   'disable_task_polling_sleep',
   'upstream_model_update_check_enabled',
   'upstream_model_update_auto_sync_enabled',
@@ -4763,6 +4765,10 @@ export function ChannelMutateDrawer({
                 />
                 {formatFields}
                 {ollamaOpenAIChatFields}
+                <ModelProtocolRulesSetting
+                  channelType={currentType}
+                  disabled={sensitiveLocked || isSubmitting}
+                />
                 {thinkingFields}
                 {currentType !== CHANNEL_TYPE_ADVANCED_CUSTOM &&
                   passthroughFields}

@@ -116,6 +116,13 @@ export interface ChannelOtherSettings {
   upstream_model_update_last_check_time?: number
   upstream_model_update_last_detected_models?: string[]
   advanced_custom?: AdvancedCustomConfig
+  model_protocol_rules?: ModelProtocolRule[]
+}
+
+export interface ModelProtocolRule {
+  pattern: string
+  protocol?: 'chat_completions' | 'responses' | 'anthropic'
+  protocols?: Array<'chat_completions' | 'responses' | 'anthropic'>
 }
 
 export interface AdvancedCustomConfig {

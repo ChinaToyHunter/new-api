@@ -163,3 +163,92 @@ func TestUpdateChannelNewAPIBalanceUsesTheSmallerRemainingQuota(t *testing.T) {
 		})
 	}
 }
+
+func TestUpdateCommandCodeCreditsReadsTheAccountWallet(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		whoami    string
+		wantOrgID string
+	}{
+		{name: "personal account sends no organization", whoami: `{"user":{"id":"u_1"},"org":null}`},
+		{name: "organization member reads the organization wallet", whoami: `{"user":{"id":"u_1"},"org":{"id":"org_1"}}`, wantOrgID: "org_1"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			setupSub2APIBalanceTest(t)
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				assert.Equal(t, "Bearer sk-command", r.Header.Get("Authorization"))
+				assert.Contains(t, r.Header.Get("User-Agent"), "codex-tui/", "the official host rejects library user agents")
+				switch r.URL.Path {
+				case "/alpha/whoami":
+					_, _ = w.Write([]byte(tc.whoami))
+				case "/alpha/billing/credits":
+					orgID, hasOrgID := r.URL.Query()["orgId"]
+					if tc.wantOrgID == "" {
+						assert.False(t, hasOrgID, "a personal account must not send orgId")
+					} else {
+						assert.Equal(t, []string{tc.wantOrgID}, orgID)
+					}
+					_, _ = w.Write([]byte(`{"credits":{"monthlyCredits":"12.5","purchasedCredits":3,"freeCredits":0.5},"windowLimits":{"limited":false}}`))
+				default:
+					http.NotFound(w, r)
+				}
+			}))
+			defer server.Close()
+			baseURL := "https://api.commandcode.ai/provider"
+			channel := &model.Channel{Type: constant.ChannelTypeCommandCode, BaseURL: &baseURL, Key: "sk-command", Name: "command-code"}
+			require.NoError(t, model.DB.Create(channel).Error)
+
+			balance, err := updateCommandCodeCredits(channel, server.URL)
+			require.NoError(t, err)
+			assert.InDelta(t, 16.0, balance, 1e-9)
+			assert.InDelta(t, 16.0, channel.Balance, 1e-9)
+		})
+	}
+
+	t.Run("relay hosts never receive the billing request", func(t *testing.T) {
+		setupSub2APIBalanceTest(t)
+		baseURL := "https://relay.example/provider"
+		channel := &model.Channel{Type: constant.ChannelTypeCommandCode, BaseURL: &baseURL, Key: "sk-command", Name: "command-code-relay"}
+		require.NoError(t, model.DB.Create(channel).Error)
+		_, err := updateChannelBalance(channel)
+		require.ErrorContains(t, err, "official api.commandcode.ai endpoint")
+	})
+}
+
+func TestCommandCodeInvalidWalletPreservesBalance(t *testing.T) {
+	for _, tc := range []struct {
+		name, whoami, credits string
+	}{
+		{"HTML identity", "<html>error</html>", `{"credits":{"monthlyCredits":0,"purchasedCredits":0,"freeCredits":0}}`},
+		{"missing organization identity", `{}`, `{"credits":{"monthlyCredits":0,"purchasedCredits":0,"freeCredits":0}}`},
+		{"invalid organization identity", `{"org":{}}`, `{"credits":{"monthlyCredits":0,"purchasedCredits":0,"freeCredits":0}}`},
+		{"invalid credit string", `{"org":null}`, `{"credits":{"monthlyCredits":"not-a-number","purchasedCredits":0,"freeCredits":0}}`},
+		{"non-finite credits", `{"org":null}`, `{"credits":{"monthlyCredits":"NaN","purchasedCredits":0,"freeCredits":0}}`},
+		{"infinite credits", `{"org":null}`, `{"credits":{"monthlyCredits":"Inf","purchasedCredits":0,"freeCredits":0}}`},
+		{"negative credits", `{"org":null}`, `{"credits":{"monthlyCredits":-1,"purchasedCredits":0,"freeCredits":0}}`},
+		{"incomplete credits", `{"org":null}`, `{"credits":{}}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			setupSub2APIBalanceTest(t)
+			var creditCalls int
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == "/alpha/whoami" {
+					_, _ = w.Write([]byte(tc.whoami))
+					return
+				}
+				creditCalls++
+				_, _ = w.Write([]byte(tc.credits))
+			}))
+			t.Cleanup(server.Close)
+			base := "https://api.commandcode.ai/provider"
+			ch := &model.Channel{Type: constant.ChannelTypeCommandCode, BaseURL: &base, Key: "test-key", Name: "invalid-wallet", Balance: 42}
+			require.NoError(t, model.DB.Create(ch).Error)
+			_, err := updateCommandCodeCredits(ch, server.URL)
+			require.Error(t, err)
+			assert.Equal(t, 42.0, ch.Balance)
+			if tc.whoami != `{"org":null}` {
+				assert.Zero(t, creditCalls, "unknown organization must not fall back to the personal wallet")
+			}
+		})
+	}
+}
