@@ -383,6 +383,10 @@ export type OperationsSettings = {
   SystemUpdateTestModeEnabled: boolean
   QuotaRemindEnabled: boolean
   QuotaRemindThreshold: string
+  EmailProvider: 'smtp' | 'resend'
+  ResendApiKey: string
+  ResendKeyConfigured: boolean
+  ResendFrom: string
   SMTPServer: string
   SMTPPort: string
   SMTPAccount: string

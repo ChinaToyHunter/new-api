@@ -143,6 +143,26 @@ type releasedAccessTokenAuditLog struct {
 
 func (releasedAccessTokenAuditLog) TableName() string { return "audit_logs" }
 
+// releasedQuotaData mirrors the quota_data schema shipped in v1.0.0-rc.44-th.23
+// and v1.0.0-rc.45, before the dashboard aggregation table grew the cache token
+// counters.
+type releasedQuotaData struct {
+	Id        int    `json:"id"`
+	UserID    int    `json:"user_id" gorm:"index"`
+	Username  string `json:"username" gorm:"index:idx_qdt_model_user_name,priority:2;size:64;default:''"`
+	ModelName string `json:"model_name" gorm:"index:idx_qdt_model_user_name,priority:1;size:64;default:''"`
+	CreatedAt int64  `json:"created_at" gorm:"bigint;index:idx_qdt_created_at,priority:2"`
+	UseGroup  string `json:"use_group" gorm:"index;size:64;default:''"`
+	TokenID   int    `json:"token_id" gorm:"index;default:0"`
+	ChannelID int    `json:"channel_id" gorm:"index;default:0"`
+	NodeName  string `json:"node_name" gorm:"index;size:64;default:''"`
+	TokenUsed int    `json:"token_used" gorm:"default:0"`
+	Count     int    `json:"count" gorm:"default:0"`
+	Quota     int    `json:"quota" gorm:"default:0"`
+}
+
+func (releasedQuotaData) TableName() string { return "quota_data" }
+
 func TestAccessTokenMigrationDatabaseMatrix(t *testing.T) {
 	for _, dialect := range []string{"sqlite", "mysql", "postgres"} {
 		t.Run(dialect, func(t *testing.T) {
@@ -312,6 +332,144 @@ func TestAccessTokenMigrationDatabaseMatrix(t *testing.T) {
 					duplicateAudit := retainedAudit
 					duplicateAudit.Id = 0
 					require.Error(t, LOG_DB.Create(&duplicateAudit).Error, "audit event identity must remain unique")
+				})
+			}
+		})
+	}
+}
+
+// Upstream added the cache token counters to the dashboard aggregation table
+// without a regression test. Prove the schema change on a fresh database and
+// on a database upgraded from the latest release, on every supported engine.
+func TestQuotaDataCacheColumnsMigrationDatabaseMatrix(t *testing.T) {
+	for _, dialect := range []string{"sqlite", "mysql", "postgres"} {
+		t.Run(dialect, func(t *testing.T) {
+			if dialect != "sqlite" && os.Getenv("TEST_"+strings.ToUpper(dialect)+"_DSN") == "" {
+				t.Skip("test database DSN is not configured")
+			}
+			for _, phase := range []string{"fresh", "upgrade"} {
+				t.Run(phase, func(t *testing.T) {
+					// An isolated database keeps the production table name, so the
+					// real index names are exercised on every engine.
+					db := newAccessTokenTestDatabase(t, dialect)
+					useAccessTokenTestDatabases(t, db, db)
+					resetQuotaDataCache := func() {
+						CacheQuotaDataLock.Lock()
+						CacheQuotaData = make(map[string]*QuotaData)
+						CacheQuotaDataLock.Unlock()
+					}
+					resetQuotaDataCache()
+					t.Cleanup(resetQuotaDataCache)
+
+					released := releasedQuotaData{
+						Id: 21, UserID: 7, Username: "alice", ModelName: "gpt-a", CreatedAt: 3600,
+						UseGroup: "vip", TokenID: 11, ChannelID: 1, NodeName: "node-a",
+						TokenUsed: 40, Count: 2, Quota: 100,
+					}
+					if phase == "upgrade" {
+						require.NoError(t, db.AutoMigrate(&releasedQuotaData{}))
+						require.False(t, db.Migrator().HasColumn(&QuotaData{}, "cache_read_tokens"))
+						require.False(t, db.Migrator().HasColumn(&QuotaData{}, "cache_creation_tokens"))
+						require.NoError(t, db.Create(&released).Error)
+					}
+
+					// The first startup migrates the released schema forward.
+					require.NoError(t, ensureUserQuotaColumns(db, common.MainDatabaseType()))
+					require.NoError(t, migrateDB())
+					assert.True(t, db.Migrator().HasColumn(&QuotaData{}, "cache_read_tokens"))
+					assert.True(t, db.Migrator().HasColumn(&QuotaData{}, "cache_creation_tokens"))
+					for _, index := range []string{
+						"idx_qdt_model_user_name", "idx_qdt_created_at",
+						"idx_quota_data_user_id", "idx_quota_data_use_group",
+						"idx_quota_data_token_id", "idx_quota_data_channel_id",
+						"idx_quota_data_node_name",
+					} {
+						assert.True(t, db.Migrator().HasIndex(&QuotaData{}, index), index)
+					}
+
+					// A second startup must not change the schema again.
+					recorder := &migrationSQLRecorder{}
+					DB = db.Session(&gorm.Session{Logger: recorder})
+					require.NoError(t, migrateDB())
+					assert.Empty(t, recorder.schemaMutations(), "a repeated startup must not change the schema")
+
+					if phase == "upgrade" {
+						var stored QuotaData
+						require.NoError(t, db.First(&stored, released.Id).Error)
+						assert.Equal(t, released.Quota, stored.Quota, "the released aggregation row must survive the migration")
+						assert.Equal(t, released.Count, stored.Count)
+						assert.Equal(t, released.TokenUsed, stored.TokenUsed)
+						assert.Equal(t, int64(0), stored.CacheReadTokens, "the new counters must default to zero")
+						assert.Equal(t, int64(0), stored.CacheCreationTokens)
+					}
+
+					// Cache counters must be recorded and accumulated per bucket.
+					for _, batch := range []QuotaDataLogParams{
+						{
+							UserID: 7, Username: "alice", ModelName: "gpt-a", CreatedAt: 3661,
+							UseGroup: "vip", TokenID: 11, ChannelID: 1, NodeName: "node-a",
+							Quota: 10, TokenUsed: 5, CacheReadTokens: 1234, CacheCreationTokens: 56,
+						},
+						{
+							UserID: 7, Username: "alice", ModelName: "gpt-a", CreatedAt: 3700,
+							UseGroup: "vip", TokenID: 11, ChannelID: 1, NodeName: "node-a",
+							Quota: 20, TokenUsed: 8, CacheReadTokens: 999, CacheCreationTokens: 7,
+						},
+						{
+							// Negative counters are clamped and must never lower the totals.
+							UserID: 7, Username: "alice", ModelName: "gpt-a", CreatedAt: 3800,
+							UseGroup: "vip", TokenID: 11, ChannelID: 1, NodeName: "node-a",
+							Quota: 0, TokenUsed: 0, CacheReadTokens: -50, CacheCreationTokens: -20,
+						},
+					} {
+						resetQuotaDataCache()
+						LogQuotaData(batch)
+						SaveQuotaDataCache()
+					}
+
+					expectedCount, expectedQuota, expectedTokenUsed := 3, 30, 13
+					if phase == "upgrade" {
+						expectedCount, expectedQuota, expectedTokenUsed = 5, 130, 53
+					}
+					var stored QuotaData
+					require.NoError(t, db.Where(&QuotaData{UserID: 7, Username: "alice"}).First(&stored).Error)
+					assert.Equal(t, int64(2233), stored.CacheReadTokens)
+					assert.Equal(t, int64(63), stored.CacheCreationTokens)
+					assert.Equal(t, expectedCount, stored.Count)
+					assert.Equal(t, expectedQuota, stored.Quota)
+					assert.Equal(t, expectedTokenUsed, stored.TokenUsed)
+
+					// The dashboard read path must return the new counters.
+					rows, err := GetQuotaDataByUsername("alice", 0, 7200)
+					require.NoError(t, err)
+					require.Len(t, rows, 1)
+					assert.Equal(t, int64(2233), rows[0].CacheReadTokens)
+					assert.Equal(t, int64(63), rows[0].CacheCreationTokens)
+					assert.Equal(t, expectedQuota, rows[0].Quota)
+
+					// The counters must be stored as 64-bit integers on every engine.
+					large := QuotaData{
+						UserID: 9, Username: "bob", ModelName: "gpt-b", CreatedAt: 3600,
+						UseGroup: "default", TokenID: 22, ChannelID: 2, NodeName: "node-b",
+						Count: 1, Quota: 5, TokenUsed: 2,
+						CacheReadTokens: 9_007_199_254_740_993, CacheCreationTokens: 4_294_967_296,
+					}
+					require.NoError(t, db.Create(&large).Error)
+					var storedLarge QuotaData
+					require.NoError(t, db.First(&storedLarge, large.Id).Error)
+					assert.Equal(t, large, storedLarge)
+
+					if dialect != "sqlite" {
+						columns, err := db.Migrator().ColumnTypes(&QuotaData{})
+						require.NoError(t, err)
+						for _, column := range columns {
+							if column.Name() != "cache_read_tokens" && column.Name() != "cache_creation_tokens" {
+								continue
+							}
+							assert.True(t, is64BitIntegerType(common.MainDatabaseType(), column.DatabaseTypeName()),
+								"%s must be a 64-bit integer, got %s", column.Name(), column.DatabaseTypeName())
+						}
+					}
 				})
 			}
 		})
