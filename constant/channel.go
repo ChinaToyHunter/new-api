@@ -62,6 +62,9 @@ const (
 	ChannelTypeVLLM           = 62
 	ChannelTypeSGLang         = 63
 	ChannelTypeVercel         = 64
+	ChannelTypeOpenCodeZen    = 65
+	ChannelTypeOpenCodeGo     = 66
+	ChannelTypeCommandCode    = 67
 	ChannelTypeDummy          // this one is only for count, do not add any channel after this
 
 )
@@ -134,6 +137,9 @@ var ChannelBaseURLs = []string{
 	"",                                          //62
 	"",                                          //63
 	"https://ai-gateway.vercel.sh",              //64
+	"https://opencode.ai/zen",                   //65
+	"https://opencode.ai/zen/go",                //66
+	"https://api.commandcode.ai/provider",       //67
 }
 
 func GetChannelBaseURL(channelType int) string {
@@ -205,6 +211,9 @@ var ChannelTypeNames = map[int]string{
 	ChannelTypeVLLM:           "vLLM",
 	ChannelTypeSGLang:         "SGLang",
 	ChannelTypeVercel:         "Vercel",
+	ChannelTypeOpenCodeZen:    "OpenCode Zen",
+	ChannelTypeOpenCodeGo:     "OpenCode Go",
+	ChannelTypeCommandCode:    "Command Code",
 }
 
 func GetChannelTypeName(channelType int) string {
@@ -236,6 +245,12 @@ var ChannelSpecialBases = map[string]ChannelSpecialBase{
 		ClaudeBaseURL: "https://ark.cn-beijing.volces.com/api/coding",
 		OpenAIBaseURL: "https://ark.cn-beijing.volces.com/api/coding/v3",
 	},
+}
+
+// IsModelRoutedChannel reports gateways whose native endpoint depends on the
+// selected upstream model instead of a global protocol upgrade policy.
+func IsModelRoutedChannel(channelType int) bool {
+	return channelType == ChannelTypeOpenCodeZen || channelType == ChannelTypeOpenCodeGo || channelType == ChannelTypeCommandCode
 }
 
 // IsAdvancedCustomChannel includes named channels backed by route presets.

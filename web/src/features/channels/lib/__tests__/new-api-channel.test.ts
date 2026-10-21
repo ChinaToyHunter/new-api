@@ -24,6 +24,9 @@ import {
   CHANNEL_TYPE_VLLM,
   CHANNEL_TYPE_SGLANG,
   CHANNEL_TYPE_VERCEL,
+  CHANNEL_TYPE_OPENCODE_ZEN,
+  CHANNEL_TYPE_OPENCODE_GO,
+  CHANNEL_TYPE_COMMAND_CODE,
   CHANNEL_TYPE_OPTIONS,
   CLAUDE_FIELD_PASSTHROUGH_TYPES,
   FIELD_PASSTHROUGH_TYPES,
@@ -174,6 +177,88 @@ describe('Vercel channel', () => {
     expect(FIELD_PASSTHROUGH_TYPES.has(CHANNEL_TYPE_VERCEL)).toBe(true)
     expect(OPENAI_FIELD_PASSTHROUGH_TYPES.has(CHANNEL_TYPE_VERCEL)).toBe(true)
     expect(CLAUDE_FIELD_PASSTHROUGH_TYPES.has(CHANNEL_TYPE_VERCEL)).toBe(true)
+  })
+})
+
+describe.each([
+  {
+    type: CHANNEL_TYPE_OPENCODE_ZEN,
+    name: 'OpenCode Zen',
+    base: 'https://opencode.ai/zen',
+  },
+  {
+    type: CHANNEL_TYPE_OPENCODE_GO,
+    name: 'OpenCode Go',
+    base: 'https://opencode.ai/zen/go',
+  },
+  {
+    type: CHANNEL_TYPE_COMMAND_CODE,
+    name: 'Command Code',
+    base: 'https://api.commandcode.ai/provider',
+  },
+])('$name model routing', ({ type, name, base }) => {
+  const rules = [{ pattern: 'claude-*', protocol: 'anthropic' }]
+
+  test('can be selected with a default endpoint and model discovery', () => {
+    expect(CHANNEL_TYPE_OPTIONS).toContainEqual({ value: type, label: name })
+    expect(MODEL_FETCHABLE_TYPES.has(type)).toBe(true)
+    expect(getChannelTypeConfig(type).defaultBaseUrl).toBe(base)
+  })
+
+  test('round-trips rules without dropping unrelated channel settings', () => {
+    const channel = channelSchema.parse({
+      id: 7,
+      name,
+      type,
+      key: '',
+      status: 1,
+      created_time: 1,
+      test_time: 0,
+      response_time: 0,
+      balance_updated_time: 0,
+      settings: JSON.stringify({
+        model_protocol_rules: rules,
+        vendor_flag: true,
+      }),
+      models: 'claude-sonnet-4-6',
+    })
+    const defaults = transformChannelToFormDefaults(channel)
+    expect(JSON.parse(defaults.model_protocol_rules ?? 'null')).toEqual(rules)
+    const payload = transformFormDataToCreatePayload(
+      channelFormSchema.parse(defaults)
+    )
+    expect(JSON.parse(payload.channel.settings ?? '{}')).toMatchObject({
+      model_protocol_rules: rules,
+      vendor_flag: true,
+    })
+  })
+
+  test('rejects an invalid protocol instead of silently dropping rules', () => {
+    const result = channelFormSchema.safeParse({
+      ...newAPIForm(''),
+      type,
+      model_protocol_rules: '[{"pattern":"gpt-*","protocol":"gemini"}]',
+    })
+    expect(result.success).toBe(false)
+    if (!result.success) {
+      expect(result.error.issues).toContainEqual(
+        expect.objectContaining({ path: ['model_protocol_rules'] })
+      )
+    }
+  })
+
+  test('clearing the editor restores built-in rules', () => {
+    const payload = transformFormDataToCreatePayload(
+      channelFormSchema.parse({
+        ...newAPIForm(''),
+        type,
+        settings: JSON.stringify({ model_protocol_rules: rules }),
+        model_protocol_rules: '',
+      })
+    )
+    expect(JSON.parse(payload.channel.settings ?? '{}')).not.toHaveProperty(
+      'model_protocol_rules'
+    )
   })
 })
 

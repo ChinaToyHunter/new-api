@@ -4,6 +4,7 @@ import (
 	"regexp"
 	"sync"
 
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/setting/model_setting"
 )
 
@@ -38,7 +39,7 @@ func matchAnyModelPattern(patterns []string, model string) bool {
 }
 
 func ShouldChatCompletionsUseResponsesPolicy(policy model_setting.ChatCompletionsToResponsesPolicy, channelID int, channelType int, model string) bool {
-	if !policy.IsChannelEnabled(channelID, channelType) {
+	if constant.IsModelRoutedChannel(channelType) || !policy.IsChannelEnabled(channelID, channelType) {
 		return false
 	}
 	return matchAnyModelPattern(policy.ModelPatterns, model)

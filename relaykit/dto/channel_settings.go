@@ -139,6 +139,10 @@ type ChannelOtherSettings struct {
 	// rejection. Empty follows the default allow policy. Accepted values:
 	// "", "allow", "safe", "strict".
 	ToolLossPolicy string `json:"tool_loss_policy,omitempty"`
+	// ModelProtocolRules replaces the built-in model → upstream protocol table
+	// of a model-routed channel (OpenCode Zen/Go, Command Code). The first
+	// matching rule wins; models no rule matches skip the built-in table.
+	ModelProtocolRules []ModelProtocolRule `json:"model_protocol_rules,omitempty"`
 }
 
 func (s *ChannelOtherSettings) IsOpenRouterEnterprise() bool {

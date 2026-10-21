@@ -7,6 +7,7 @@ import (
 	"io"
 	"math"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -15,6 +16,7 @@ import (
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/relay/channel/advancedcustom"
+	"github.com/QuantumNous/new-api/relay/channel/modelroute"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/relaykit/dto"
@@ -468,6 +470,111 @@ func updateChannelSub2APIBalance(channel *model.Channel) (float64, error) {
 	return *balance, nil
 }
 
+// updateChannelCommandCodeBalance reads Command Code credits. Keys of a
+// custom relay are never sent to the official billing API.
+func updateChannelCommandCodeBalance(channel *model.Channel) (float64, error) {
+	if !modelroute.IsCommandCodeOfficialURL(channel.GetBaseURL()) {
+		return 0, errors.New("Command Code balance is only available for the official api.commandcode.ai endpoint")
+	}
+	return updateCommandCodeCredits(channel, "https://api.commandcode.ai")
+}
+
+// updateCommandCodeCredits sums the credits a Command Code key can spend: plan,
+// purchased and free credits, all in USD. An organization member's wallet is
+// read with the organization ID, while a personal account must not send one,
+// so whoami decides which wallet is read.
+func updateCommandCodeCredits(channel *model.Channel, apiBase string) (float64, error) {
+	key, _, apiErr := channel.GetNextEnabledKey()
+	if apiErr != nil {
+		return 0, errors.New("Command Code balance has no enabled key")
+	}
+	headers, err := buildFetchModelsHeaders(channel, strings.TrimSpace(key))
+	if err != nil {
+		return 0, errors.New("invalid Command Code billing headers")
+	}
+	headers.Set("Accept", "application/json")
+	body, err := getCommandCodeBillingResponse(channel, apiBase+"/alpha/whoami", headers)
+	if err != nil {
+		return 0, err
+	}
+	var identity struct {
+		Org json.RawMessage `json:"org"`
+	}
+	if err := common.Unmarshal(body, &identity); err != nil || len(identity.Org) == 0 {
+		return 0, errors.New("invalid Command Code account identity response")
+	}
+	creditsURL := apiBase + "/alpha/billing/credits"
+	if string(identity.Org) != "null" {
+		var org struct {
+			ID string `json:"id"`
+		}
+		if err := common.Unmarshal(identity.Org, &org); err != nil || strings.TrimSpace(org.ID) == "" {
+			return 0, errors.New("invalid Command Code organization identity response")
+		}
+		creditsURL += "?orgId=" + url.QueryEscape(strings.TrimSpace(org.ID))
+	}
+	body, err = getCommandCodeBillingResponse(channel, creditsURL, headers)
+	if err != nil {
+		return 0, err
+	}
+	var response struct {
+		Credits map[string]json.RawMessage `json:"credits"`
+	}
+	if err := common.Unmarshal(body, &response); err != nil || response.Credits == nil {
+		return 0, errors.New("invalid Command Code credits response")
+	}
+	balance := 0.0
+	for _, field := range []string{"monthlyCredits", "purchasedCredits", "freeCredits"} {
+		raw := response.Credits[field]
+		var amount float64
+		err := common.Unmarshal(raw, &amount)
+		if err != nil {
+			var text string
+			if err = common.Unmarshal(raw, &text); err == nil {
+				amount, err = strconv.ParseFloat(strings.TrimSpace(text), 64)
+			}
+		}
+		if err != nil || string(raw) == "null" || math.IsNaN(amount) || math.IsInf(amount, 0) || amount < 0 {
+			return 0, fmt.Errorf("invalid Command Code credit amount: %s", field)
+		}
+		balance += amount
+	}
+	if math.IsNaN(balance) || math.IsInf(balance, 0) {
+		return 0, errors.New("invalid Command Code credit total")
+	}
+	channel.UpdateBalance(balance)
+	return balance, nil
+}
+
+func getCommandCodeBillingResponse(channel *model.Channel, target string, headers http.Header) ([]byte, error) {
+	settings := channel.GetSetting()
+	client, err := service.GetHttpClientWithProxySettings(settings.Proxy, settings)
+	if err != nil {
+		return nil, errors.New("invalid Command Code billing transport")
+	}
+	billingClient := *client
+	billingClient.Timeout = 15 * time.Second
+	billingClient.CheckRedirect = func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }
+	req, err := http.NewRequest(http.MethodGet, target, nil)
+	if err != nil {
+		return nil, errors.New("invalid Command Code billing URL")
+	}
+	req.Header = headers.Clone()
+	resp, err := billingClient.Do(req)
+	if err != nil {
+		return nil, errors.New("Command Code billing request failed")
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("Command Code billing returned HTTP %d", resp.StatusCode)
+	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxAdvancedCustomBalanceResponseBytes+1))
+	if err != nil || len(body) > maxAdvancedCustomBalanceResponseBytes {
+		return nil, errors.New("invalid Command Code billing response body")
+	}
+	return body, nil
+}
+
 // updateChannelNewAPIBalance reads the upstream key's remaining quota. When the
 // upstream also returns its owner's quota, the smaller of the two is what the
 // key can still spend. Quota converts to USD with the upstream's quota_per_unit.
@@ -656,6 +763,8 @@ func updateStandardChannelBalance(channel *model.Channel) (float64, error) {
 		return updateChannelSub2APIBalance(channel)
 	case constant.ChannelTypeNewAPI:
 		return updateChannelNewAPIBalance(channel)
+	case constant.ChannelTypeCommandCode:
+		return updateChannelCommandCodeBalance(channel)
 	default:
 		return 0, common.NewMessage("Not implemented yet")
 	}

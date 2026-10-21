@@ -109,13 +109,19 @@ func TextHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *types
 		}
 		requestBody = common.NewReplayableBodyReader(storage)
 	} else {
+		// Model-routed gateways may return a different request DTO. Apply the
+		// channel prompt while this is still a Chat request, once per attempt.
+		modelRouted := constant.IsModelRoutedChannel(info.ChannelType)
+		if modelRouted {
+			applySystemPromptIfNeeded(c, info, request)
+		}
 		convertedRequest, err := adaptor.ConvertOpenAIRequest(c, info, request)
 		if err != nil {
 			return newConvertRequestFailedError(c, info, err)
 		}
 		relaycommon.AppendRequestConversionFromRequest(info, convertedRequest)
 
-		if req, ok := convertedRequest.(*dto.GeneralOpenAIRequest); ok {
+		if req, ok := convertedRequest.(*dto.GeneralOpenAIRequest); ok && !modelRouted {
 			applySystemPromptIfNeeded(c, info, req)
 		}
 

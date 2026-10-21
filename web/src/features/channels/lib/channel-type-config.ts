@@ -18,6 +18,9 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import {
   CHANNEL_TYPES,
+  CHANNEL_TYPE_COMMAND_CODE,
+  CHANNEL_TYPE_OPENCODE_GO,
+  CHANNEL_TYPE_OPENCODE_ZEN,
   CHANNEL_TYPE_VLLM,
   CHANNEL_TYPE_SGLANG,
 } from '../constants'
@@ -191,6 +194,39 @@ export const CHANNEL_TYPE_CONFIGS: Record<number, ChannelTypeConfig> = {
       key: 'Vercel AI Gateway API key',
       models:
         'e.g. google/gemini-3.8-flash, anthropic/claude-sonnet-4, openai/gpt-4o',
+    },
+  },
+  [CHANNEL_TYPE_OPENCODE_ZEN]: {
+    id: CHANNEL_TYPE_OPENCODE_ZEN,
+    name: CHANNEL_TYPES[CHANNEL_TYPE_OPENCODE_ZEN],
+    icon: 'OpenCode',
+    defaultBaseUrl: 'https://opencode.ai/zen',
+    hints: {
+      baseUrl: 'OpenCode Zen base URL, without /v1',
+      key: 'OpenCode API key',
+      models: 'Models fetched from upstream /v1/models',
+    },
+  },
+  [CHANNEL_TYPE_OPENCODE_GO]: {
+    id: CHANNEL_TYPE_OPENCODE_GO,
+    name: CHANNEL_TYPES[CHANNEL_TYPE_OPENCODE_GO],
+    icon: 'OpenCode',
+    defaultBaseUrl: 'https://opencode.ai/zen/go',
+    hints: {
+      baseUrl: 'OpenCode Go base URL, without /v1',
+      key: 'OpenCode API key',
+      models: 'Models fetched from upstream /v1/models',
+    },
+  },
+  [CHANNEL_TYPE_COMMAND_CODE]: {
+    id: CHANNEL_TYPE_COMMAND_CODE,
+    name: CHANNEL_TYPES[CHANNEL_TYPE_COMMAND_CODE],
+    icon: 'CommandCode',
+    defaultBaseUrl: 'https://api.commandcode.ai/provider',
+    hints: {
+      baseUrl: 'Command Code provider base URL, without /v1',
+      key: 'Command Code API key',
+      models: 'Models fetched from upstream /v1/models',
     },
   },
 }

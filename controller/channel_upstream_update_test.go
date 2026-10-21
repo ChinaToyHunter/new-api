@@ -418,6 +418,42 @@ func TestFetchNewAPIModelsUsesOpenAIContract(t *testing.T) {
 	require.Equal(t, []string{"gpt-5", "gpt-5-mini"}, models)
 }
 
+func TestFetchModelRoutedChannelModelsUsesGatewayClientIdentity(t *testing.T) {
+	for _, tc := range []struct {
+		name           string
+		basePath       string
+		headerOverride string
+		wantPath       string
+		wantUserAgent  string
+	}{
+		{name: "base url without v1", basePath: "/zen/go", wantPath: "/zen/go/v1/models", wantUserAgent: "opencode/1.0.0"},
+		{name: "base url with v1", basePath: "/zen/v1/", wantPath: "/zen/v1/models", wantUserAgent: "opencode/1.0.0"},
+		{name: "header override wins", basePath: "/zen/go", headerOverride: `{"User-Agent":"custom-agent"}`, wantPath: "/zen/go/v1/models", wantUserAgent: "custom-agent"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var gotPath, gotUserAgent, gotAuthorization string
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				gotPath, gotUserAgent, gotAuthorization = r.URL.Path, r.Header.Get("User-Agent"), r.Header.Get("Authorization")
+				_, _ = w.Write([]byte(`{"data":[{"id":"glm-5.3"},{"id":"gpt-5.6-luna"}]}`))
+			}))
+			t.Cleanup(server.Close)
+
+			baseURL := server.URL + tc.basePath
+			channel := &model.Channel{Type: constant.ChannelTypeOpenCodeGo, Key: "opencode-key", BaseURL: &baseURL}
+			if tc.headerOverride != "" {
+				channel.HeaderOverride = &tc.headerOverride
+			}
+
+			models, err := fetchChannelUpstreamModelIDs(channel)
+			require.NoError(t, err)
+			assert.Equal(t, []string{"glm-5.3", "gpt-5.6-luna"}, models)
+			assert.Equal(t, tc.wantPath, gotPath)
+			assert.Equal(t, tc.wantUserAgent, gotUserAgent)
+			assert.Equal(t, "Bearer opencode-key", gotAuthorization)
+		})
+	}
+}
+
 func TestNormalizeModelNames(t *testing.T) {
 	result := normalizeModelNames([]string{
 		" gpt-4o ",

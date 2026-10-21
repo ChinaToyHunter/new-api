@@ -459,6 +459,9 @@ var streamSupportedChannels = map[int]bool{
 	constant.ChannelTypeVLLM:           true,
 	constant.ChannelTypeSGLang:         true,
 	constant.ChannelTypeVercel:         true,
+	constant.ChannelTypeOpenCodeZen:    true,
+	constant.ChannelTypeOpenCodeGo:     true,
+	constant.ChannelTypeCommandCode:    true,
 	constant.ChannelTypeTencent:        true,
 }
 

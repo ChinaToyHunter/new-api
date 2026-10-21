@@ -2,10 +2,12 @@ package relay
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"math"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
@@ -16,6 +18,8 @@ import (
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/relayconvert"
 	relaytypes "github.com/QuantumNous/new-api/relaykit/types"
+	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/setting/model_setting"
 	hosttypes "github.com/QuantumNous/new-api/types"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
@@ -207,6 +211,49 @@ func TestTextRequestViaResponsesConvertsClaudeDirectly(t *testing.T) {
 	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &response))
 	require.Len(t, response.Content, 1)
 	assert.Equal(t, "ok", response.Content[0].GetText())
+}
+
+func TestModelRoutedChannelsIgnoreGenericResponsesUpgrade(t *testing.T) {
+	policy := model_setting.ChatCompletionsToResponsesPolicy{Enabled: true, AllChannels: true, ModelPatterns: []string{".*"}}
+	for _, channelType := range []int{constant.ChannelTypeOpenCodeZen, constant.ChannelTypeOpenCodeGo, constant.ChannelTypeCommandCode} {
+		assert.False(t, service.ShouldChatCompletionsUseResponsesPolicy(policy, 1, channelType, "glm-5.3"))
+	}
+	assert.True(t, service.ShouldChatCompletionsUseResponsesPolicy(policy, 1, constant.ChannelTypeOpenAI, "gpt-5"))
+}
+
+func TestTextHelperPreservesSystemPromptBeforeModelRouting(t *testing.T) {
+	for _, override := range []bool{false, true} {
+		t.Run(fmt.Sprintf("override=%t", override), func(t *testing.T) {
+			captured := make(chan []byte, 1)
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				body, _ := io.ReadAll(r.Body)
+				captured <- body
+				w.WriteHeader(http.StatusBadRequest) // Stop before quota settlement.
+				_, _ = w.Write([]byte(`{"error":{"type":"invalid_request_error","message":"test boundary"}}`))
+			}))
+			t.Cleanup(server.Close)
+			c, _ := gin.CreateTestContext(httptest.NewRecorder())
+			c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+			c.Request.Header.Set("Content-Type", "application/json")
+			common.SetContextKey(c, constant.ContextKeyOriginalModel, "minimax-m3")
+			common.SetContextKey(c, constant.ContextKeyChannelType, constant.ChannelTypeOpenCodeGo)
+			common.SetContextKey(c, constant.ContextKeyChannelBaseUrl, server.URL)
+			common.SetContextKey(c, constant.ContextKeyChannelKey, "test-key")
+			common.SetContextKey(c, constant.ContextKeyChannelSetting, dto.ChannelSettings{SystemPrompt: "channel prompt", SystemPromptOverride: override})
+			request := &dto.GeneralOpenAIRequest{Model: "minimax-m3", Messages: []dto.Message{{Role: "user", Content: "hi"}}}
+			if override {
+				request.Messages = append([]dto.Message{{Role: "system", Content: "client prompt"}}, request.Messages...)
+			}
+			info := relaycommon.GenRelayInfoOpenAI(c, request)
+			require.NotNil(t, TextHelper(c, info))
+			body := <-captured
+			assert.Contains(t, string(body), "channel prompt", "prompt must survive Chat→Messages conversion")
+			if override {
+				assert.Equal(t, 1, strings.Count(string(body), "channel prompt"), "do not inject twice")
+				assert.Contains(t, string(body), "client prompt")
+			}
+		})
+	}
 }
 
 func TestApplySystemPromptIfNeededSkipsToolLoadingMessages(t *testing.T) {

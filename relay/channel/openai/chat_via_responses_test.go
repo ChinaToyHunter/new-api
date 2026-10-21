@@ -14,6 +14,7 @@ import (
 	"github.com/QuantumNous/new-api/relaykit/relayconvert"
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -321,6 +322,102 @@ func TestOaiChatToResponsesStreamHandlerRestoresCodexCustomToolCall(t *testing.T
 		`event: response.completed`,
 		`"type":"custom_tool_call"`,
 	)
+}
+
+func TestResponseBridgesRetainBillableTools(t *testing.T) {
+	oldTimeout := constant.StreamingTimeout
+	constant.StreamingTimeout = 30
+	t.Cleanup(func() { constant.StreamingTimeout = oldTimeout })
+
+	const priced = "bridge_priced_fn"
+	operation_setting.SetToolPriceForTest(priced, 5)
+	t.Cleanup(func() { operation_setting.DeleteToolPriceForTest(priced) })
+
+	chat := `{"id":"chat_1","model":"gpt-test","choices":[{"index":0,"message":{"role":"assistant","tool_calls":[{"id":"call_1","type":"function","function":{"name":"bridge_priced_fn","arguments":"{}"}},{"id":"call_2","type":"function","function":{"name":"unpriced_fn","arguments":"{}"}}]},"finish_reason":"tool_calls"}],"usage":{"prompt_tokens":20,"completion_tokens":5,"total_tokens":25,"prompt_tokens_details":{"cached_tokens":4}},"vendor_calls":4}`
+	chatStream := strings.Join([]string{
+		`data: {"id":"chat_1","model":"gpt-test","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"bridge_priced_fn","arguments":""}}]}}]}`,
+		`data: {"id":"chat_1","model":"gpt-test","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"bridge_priced_fn","arguments":""}}]}}]}`,
+		`data: {"id":"chat_1","model":"gpt-test","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{}"}},{"index":1,"id":"call_2","type":"function","function":{"name":"unpriced_fn","arguments":"{}"}}]}}]}`,
+		`data: {"id":"chat_1","model":"gpt-test","choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}`,
+		`data: {"choices":[],"usage":{"prompt_tokens":20,"completion_tokens":5,"total_tokens":25,"prompt_tokens_details":{"cached_tokens":4}}}`,
+		`data: [DONE]`, "",
+	}, "\n")
+	items := []string{
+		`{"type":"web_search_call","id":"web_1","status":"completed"}`,
+		`{"type":"file_search_call","id":"file_1","status":"completed"}`,
+		`{"type":"function_call","id":"fc_1","call_id":"call_1","name":"bridge_priced_fn","arguments":"{}"}`,
+		`{"type":"function_call","id":"fc_2","call_id":"call_2","name":"unpriced_fn","arguments":"{}"}`,
+		`{"type":"image_generation_call","id":"image_1","status":"completed","result":"image-data"}`,
+	}
+	responses := `{"id":"resp_1","model":"gpt-test","status":"completed","output":[` + strings.Join(items, ",") + `],"usage":{"input_tokens":20,"output_tokens":5,"total_tokens":25,"input_tokens_details":{"cached_tokens":4}},"vendor_calls":4}`
+	var events []string
+	for i, item := range items {
+		for _, eventType := range []string{"response.output_item.added", "response.output_item.done"} {
+			var output dto.ResponsesOutput
+			require.NoError(t, common.Unmarshal([]byte(item), &output))
+			event, err := common.Marshal(dto.ResponsesStreamResponse{Type: eventType, OutputIndex: &i, Item: &output})
+			require.NoError(t, err)
+			events = append(events, "data: "+string(event))
+		}
+	}
+	events = append(events,
+		`data: {"type":"response.output_item.done","output_index":4,"item":`+items[4]+`}`,
+		`data: {"type":"response.completed","response":`+responses+`,"vendor_calls":4}`,
+		`data: [DONE]`, "")
+	responsesStream := strings.Join(events, "\n")
+
+	for _, tc := range []struct {
+		name    string
+		body    string
+		stream  bool
+		hosted  bool
+		vendor  bool
+		handler func(*gin.Context, *relaycommon.RelayInfo, *http.Response) (*dto.Usage, *types.NewAPIError)
+	}{
+		{"chat nonstream", chat, false, false, true, OaiChatToResponsesHandler},
+		{"chat stream duplicate chunks", chatStream, true, false, false, OaiChatToResponsesStreamHandler},
+		{"responses nonstream", responses, false, true, true, OaiResponsesToChatHandler},
+		{"responses stream", responsesStream, true, true, true, OaiResponsesToChatStreamHandler},
+		{"responses buffered stream", responsesStream, false, true, true, OaiResponsesToChatBufferedStreamHandler},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c, _, resp, info := newResponsesChatTestContext(t, tc.body, tc.stream)
+			if !tc.hosted {
+				info.RelayFormat = types.RelayFormatOpenAIResponses
+			}
+			info.VendorToolUsage = func(raw []byte) map[string]int {
+				if strings.Contains(string(raw), `"vendor_calls":4`) {
+					return map[string]int{dto.BuildInToolWebSearchPreview: 4}
+				}
+				return nil
+			}
+			usage, apiErr := tc.handler(c, info, resp)
+			require.Nil(t, apiErr)
+			require.NotNil(t, usage)
+			assert.Equal(t, 20, usage.PromptTokens)
+			assert.Equal(t, 5, usage.CompletionTokens)
+			assert.Equal(t, 25, usage.TotalTokens)
+			if tc.hosted {
+				assert.Equal(t, 4, usage.PromptTokensDetails.CachedTokens)
+			}
+			require.NotNil(t, usage.BillingUsage)
+			require.NotNil(t, info.ResponsesUsageInfo, "actual upstream tools must remain billable across conversion")
+			tools := info.ResponsesUsageInfo.BuiltInTools
+			require.Contains(t, tools, priced)
+			assert.Equal(t, 1, tools[priced].CallCount)
+			assert.NotContains(t, tools, "unpriced_fn")
+			if tc.vendor {
+				require.Contains(t, tools, dto.BuildInToolWebSearchPreview)
+				assert.Equal(t, 4, tools[dto.BuildInToolWebSearchPreview].CallCount, "vendor cumulative count replaces protocol count")
+			}
+			if tc.hosted {
+				require.Contains(t, tools, dto.BuildInToolFileSearch)
+				assert.Equal(t, 1, tools[dto.BuildInToolFileSearch].CallCount, "added/done/terminal snapshots must not multiply calls")
+				require.Contains(t, tools, dto.BuildInToolImageGeneration)
+				assert.Equal(t, 1, tools[dto.BuildInToolImageGeneration].CallCount, "duplicate image done and terminal output bill once")
+			}
+		})
+	}
 }
 
 func requireOrderedSubstrings(t *testing.T, s string, parts ...string) {

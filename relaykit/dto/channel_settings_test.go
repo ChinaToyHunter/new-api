@@ -736,3 +736,69 @@ func TestChannelOtherSettingsValidateToolLossPolicy(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "tool_loss_policy")
 }
+
+func TestChannelOtherSettingsValidateModelProtocolRules(t *testing.T) {
+	valid := &ChannelOtherSettings{ModelProtocolRules: []ModelProtocolRule{
+		{Pattern: "claude-*", Protocol: ModelProtocolAnthropic},
+		{Pattern: "GPT-5.5", Protocols: []string{ModelProtocolResponses, ModelProtocolChatCompletions}},
+		{Pattern: "*", Protocol: ModelProtocolChatCompletions},
+	}}
+	require.NoError(t, valid.ValidateModelProtocolRules())
+	require.NoError(t, (&ChannelOtherSettings{}).ValidateModelProtocolRules())
+
+	tooMany := make([]ModelProtocolRule, maxModelProtocolRules+1)
+	for i := range tooMany {
+		tooMany[i] = ModelProtocolRule{Pattern: "m", Protocol: ModelProtocolChatCompletions}
+	}
+	tests := []struct {
+		name    string
+		rules   []ModelProtocolRule
+		wantErr string
+	}{
+		{"empty pattern", []ModelProtocolRule{{Pattern: " ", Protocol: ModelProtocolAnthropic}}, "pattern is required"},
+		{"whitespace in pattern", []ModelProtocolRule{{Pattern: "gpt 5", Protocol: ModelProtocolAnthropic}}, "whitespace"},
+		{"wildcard not at the end", []ModelProtocolRule{{Pattern: "*-mini", Protocol: ModelProtocolAnthropic}}, "single * wildcard"},
+		{"two wildcards", []ModelProtocolRule{{Pattern: "gpt-**", Protocol: ModelProtocolAnthropic}}, "single * wildcard"},
+		{"unknown protocol", []ModelProtocolRule{{Pattern: "gpt-*", Protocol: "gemini"}}, "protocol must be"},
+		{"unknown listed protocol", []ModelProtocolRule{{Pattern: "gpt-*", Protocol: ModelProtocolResponses, Protocols: []string{"gemini"}}}, "protocols must only contain"},
+		{"no protocol", []ModelProtocolRule{{Pattern: "gpt-*"}}, "protocol is required"},
+		{"too many rules", tooMany, "at most"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := (&ChannelOtherSettings{ModelProtocolRules: tt.rules}).ValidateModelProtocolRules()
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tt.wantErr)
+		})
+	}
+}
+
+func TestMatchModelProtocolRules(t *testing.T) {
+	rules := []ModelProtocolRule{
+		{Pattern: "qwen3.8-max", Protocol: ModelProtocolChatCompletions},
+		{Pattern: "Qwen*", Protocol: ModelProtocolAnthropic},
+		{Pattern: "gpt-*", Protocols: []string{ModelProtocolResponses, ModelProtocolChatCompletions, ModelProtocolResponses}},
+	}
+	tests := []struct {
+		model  string
+		want   []string
+		wantOK bool
+	}{
+		{"qwen3.8-max", []string{ModelProtocolChatCompletions}, true},
+		{"QWEN3.7-plus", []string{ModelProtocolAnthropic}, true},
+		{"gpt-5.5", []string{ModelProtocolResponses, ModelProtocolChatCompletions}, true},
+		{"gpt", nil, false},
+		{"glm-5.3", nil, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.model, func(t *testing.T) {
+			got, ok := MatchModelProtocolRules(rules, tt.model)
+			assert.Equal(t, tt.wantOK, ok)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+
+	got, ok := MatchModelProtocolRules([]ModelProtocolRule{{Pattern: "*", Protocol: ModelProtocolResponses}}, "any-model")
+	require.True(t, ok)
+	assert.Equal(t, []string{ModelProtocolResponses}, got)
+}

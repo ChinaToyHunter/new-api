@@ -40,6 +40,23 @@ export const CHANNEL_TYPE_SGLANG = 63
 
 export const CHANNEL_TYPE_VERCEL = 64
 
+export const CHANNEL_TYPE_OPENCODE_ZEN = 65
+
+export const CHANNEL_TYPE_OPENCODE_GO = 66
+
+export const CHANNEL_TYPE_COMMAND_CODE = 67
+
+/**
+ * Gateways that serve each model on Chat Completions, Responses or Anthropic
+ * Messages behind one key; the backend routes requests by model and accepts
+ * channel-level model protocol rules.
+ */
+export const MODEL_ROUTED_CHANNEL_TYPES = new Set<number>([
+  CHANNEL_TYPE_OPENCODE_ZEN,
+  CHANNEL_TYPE_OPENCODE_GO,
+  CHANNEL_TYPE_COMMAND_CODE,
+])
+
 export const CHANNEL_TYPES = {
   0: 'Unknown',
   1: 'OpenAI',
@@ -102,6 +119,9 @@ export const CHANNEL_TYPES = {
   62: 'vLLM',
   63: 'SGLang',
   64: 'Vercel',
+  65: 'OpenCode Zen',
+  66: 'OpenCode Go',
+  67: 'Command Code',
 } as const
 
 export type ChannelProviderPresentation = {
@@ -186,6 +206,18 @@ export const CHANNEL_PROVIDER_PRESENTATION: Partial<
   62: { descriptionKey: 'Connect to self-hosted models served by vLLM' },
   63: { descriptionKey: 'Connect to self-hosted models served by SGLang' },
   64: { descriptionKey: 'Connect to models through the Vercel AI Gateway' },
+  65: {
+    descriptionKey:
+      'Connect to pay-as-you-go OpenCode Zen models with automatic protocol routing',
+  },
+  66: {
+    descriptionKey:
+      'Connect to OpenCode Go subscription models with automatic protocol routing',
+  },
+  67: {
+    descriptionKey:
+      'Connect to Command Code provider models with automatic protocol routing',
+  },
 } satisfies Record<
   Exclude<keyof typeof CHANNEL_TYPES, 0 | typeof CHANNEL_TYPE_TASK_PLUGIN>,
   ChannelProviderPresentation
@@ -203,6 +235,9 @@ const CHANNEL_TYPE_DISPLAY_ORDER: number[] = [
   60,
   58,
   CHANNEL_TYPE_VERCEL,
+  CHANNEL_TYPE_OPENCODE_ZEN,
+  CHANNEL_TYPE_OPENCODE_GO,
+  CHANNEL_TYPE_COMMAND_CODE,
   61,
   42,
   34,
@@ -584,6 +619,7 @@ export const MODEL_FETCHABLE_TYPES = new Set([
   CHANNEL_TYPE_VLLM,
   CHANNEL_TYPE_SGLANG,
   CHANNEL_TYPE_VERCEL,
+  ...MODEL_ROUTED_CHANNEL_TYPES,
 ])
 
 export const FIELD_PASSTHROUGH_TYPES = new Set([
@@ -596,6 +632,7 @@ export const FIELD_PASSTHROUGH_TYPES = new Set([
   CHANNEL_TYPE_VLLM,
   CHANNEL_TYPE_SGLANG,
   CHANNEL_TYPE_VERCEL,
+  ...MODEL_ROUTED_CHANNEL_TYPES,
 ])
 
 export const OPENAI_FIELD_PASSTHROUGH_TYPES = new Set([
@@ -607,6 +644,7 @@ export const OPENAI_FIELD_PASSTHROUGH_TYPES = new Set([
   CHANNEL_TYPE_VLLM,
   CHANNEL_TYPE_SGLANG,
   CHANNEL_TYPE_VERCEL,
+  ...MODEL_ROUTED_CHANNEL_TYPES,
 ])
 
 export const CLAUDE_FIELD_PASSTHROUGH_TYPES = new Set([
@@ -617,6 +655,7 @@ export const CLAUDE_FIELD_PASSTHROUGH_TYPES = new Set([
   CHANNEL_TYPE_VLLM,
   CHANNEL_TYPE_SGLANG,
   CHANNEL_TYPE_VERCEL,
+  ...MODEL_ROUTED_CHANNEL_TYPES,
 ])
 
 export const TYPE_TO_KEY_PROMPT: Record<number, string> = {
