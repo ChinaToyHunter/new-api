@@ -256,6 +256,7 @@ func TestPollingPassesExecutingChannelTypeToAdaptor(t *testing.T) {
 	const channelID = 112
 	baseURL := "https://gateway.example"
 	gateway := &model.Channel{Id: channelID, Type: constant.ChannelTypeNewAPI, Name: "gateway", Key: "sk-gateway", Status: common.ChannelStatusEnabled, BaseURL: &baseURL}
+	gateway.HeaderOverride = common.GetPointer(`{"X-API-Key":"{api_key}"}`)
 	gateway.SetOtherSettings(dto.ChannelOtherSettings{DisableTaskPollingSleep: true})
 	require.NoError(t, model.DB.Create(gateway).Error)
 	task := seedPollingTask(t, channelID, "task_gateway", "upstream_gateway")
@@ -272,6 +273,7 @@ func TestPollingPassesExecutingChannelTypeToAdaptor(t *testing.T) {
 	assert.Equal(t, constant.ChannelTypeNewAPI, meta.ChannelType, "the adaptor derives the upstream kind from the channel type")
 	assert.Equal(t, channelID, meta.ChannelId)
 	assert.Equal(t, baseURL, meta.ChannelBaseUrl)
+	assert.Equal(t, map[string]any{"X-API-Key": "{api_key}"}, meta.HeadersOverride)
 
 	batch := &batchPollingAdaptor{}
 	require.NoError(t, UpdateBatchTasks(context.Background(), batch, taskChannels, tasks))
@@ -280,6 +282,7 @@ func TestPollingPassesExecutingChannelTypeToAdaptor(t *testing.T) {
 	assert.Equal(t, constant.ChannelTypeNewAPI, meta.ChannelType)
 	assert.Equal(t, channelID, meta.ChannelId)
 	assert.Equal(t, baseURL, meta.ChannelBaseUrl)
+	assert.Equal(t, map[string]any{"X-API-Key": "{api_key}"}, meta.HeadersOverride)
 }
 
 func TestPollingKeepsPersistedSubmissionIdentityAfterChannelRotation(t *testing.T) {
