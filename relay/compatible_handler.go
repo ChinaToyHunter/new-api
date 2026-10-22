@@ -9,9 +9,11 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/logger"
+	"github.com/QuantumNous/new-api/relay/channel"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/relay/helper"
+	"github.com/QuantumNous/new-api/relay/webtools"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/service"
@@ -73,31 +75,9 @@ func TextHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *types
 	}
 	adaptor.Init(info)
 
-	passThroughGlobal := model_setting.GetGlobalSettings().PassThroughRequestEnabled
-	if info.RelayMode == relayconstant.RelayModeChatCompletions &&
-		!passThroughGlobal &&
-		!info.ChannelSetting.PassThroughBodyEnabled &&
-		service.ShouldChatCompletionsUseResponsesGlobal(info.ChannelId, info.ChannelType, info.OriginModelName) {
-		applySystemPromptIfNeeded(c, info, request)
-		usage, newApiErr := textRequestViaResponses(c, info, adaptor, request)
-		if newApiErr != nil {
-			return newApiErr
-		}
-
-		var containAudioTokens = usage.CompletionTokenDetails.AudioTokens > 0 || usage.PromptTokensDetails.AudioTokens > 0
-		var containsAudioRatios = ratio_setting.ContainsAudioRatio(info.OriginModelName) || ratio_setting.ContainsAudioCompletionRatio(info.OriginModelName)
-
-		if containAudioTokens && containsAudioRatios {
-			service.PostAudioConsumeQuota(c, info, usage, nil)
-		} else {
-			service.PostTextConsumeQuota(c, info, usage, nil)
-		}
-		return nil
-	}
-
-	var requestBody io.Reader
-
-	if passThroughGlobal || info.ChannelSetting.PassThroughBodyEnabled {
+	var usage *dto.Usage
+	switch {
+	case model_setting.GetGlobalSettings().PassThroughRequestEnabled || info.ChannelSetting.PassThroughBodyEnabled:
 		storage, err := common.GetBodyStorage(c)
 		if err != nil {
 			return types.NewErrorWithStatusCode(err, types.ErrorCodeReadRequestBodyFailed, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
@@ -107,58 +87,93 @@ func TextHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *types
 				logger.LogDebug(c, "requestBody: %s", debugBytes)
 			}
 		}
-		requestBody = common.NewReplayableBodyReader(storage)
-	} else {
-		// Model-routed gateways may return a different request DTO. Apply the
-		// channel prompt while this is still a Chat request, once per attempt.
-		modelRouted := constant.IsModelRoutedChannel(info.ChannelType)
-		if modelRouted {
-			applySystemPromptIfNeeded(c, info, request)
+		usage, newAPIError = doRelayRequest(c, info, adaptor, common.NewReplayableBodyReader(storage))
+	case info.RelayMode == relayconstant.RelayModeChatCompletions && webtools.GatewayMode(c, info):
+		backend := webtools.NewBackend(c, info)
+		if tools := chatHostedWebTools(request, backend); tools != nil {
+			usage, newAPIError = relayChatWithWebTools(c, info, adaptor, request, tools, backend)
+		} else {
+			usage, newAPIError = relayTextRequest(c, info, adaptor, request)
 		}
-		convertedRequest, err := adaptor.ConvertOpenAIRequest(c, info, request)
-		if err != nil {
-			return newConvertRequestFailedError(c, info, err)
-		}
-		relaycommon.AppendRequestConversionFromRequest(info, convertedRequest)
-
-		if req, ok := convertedRequest.(*dto.GeneralOpenAIRequest); ok && !modelRouted {
-			applySystemPromptIfNeeded(c, info, req)
-		}
-
-		jsonData, err := common.Marshal(convertedRequest)
-		if err != nil {
-			return types.NewError(err, types.ErrorCodeJsonMarshalFailed, types.ErrOptionWithSkipRetry())
-		}
-
-		// remove disabled fields for OpenAI API
-		jsonData, err = relaycommon.RemoveDisabledFields(jsonData, info.ChannelOtherSettings, info.ChannelSetting.PassThroughBodyEnabled)
-		if err != nil {
-			return types.NewError(err, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
-		}
-
-		// apply param override
-		if len(info.ParamOverride) > 0 {
-			jsonData, err = relaycommon.ApplyParamOverrideWithRelayInfo(jsonData, info)
-			if err != nil {
-				return newAPIErrorFromParamOverride(err)
-			}
-		}
-
-		logger.LogDebug(c, "text request body: %s", jsonData)
-
-		body, closer, err := relaycommon.NewOutboundJSONBody(jsonData)
-		if err != nil {
-			return types.NewError(err, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
-		}
-		defer closer.Close()
-		jsonData = nil
-		requestBody = body
+	default:
+		usage, newAPIError = relayTextRequest(c, info, adaptor, request)
+	}
+	if newAPIError != nil {
+		return newAPIError
 	}
 
+	var containAudioTokens = usage.CompletionTokenDetails.AudioTokens > 0 || usage.PromptTokensDetails.AudioTokens > 0
+	var containsAudioRatios = ratio_setting.ContainsAudioRatio(info.OriginModelName) || ratio_setting.ContainsAudioCompletionRatio(info.OriginModelName)
+
+	if containAudioTokens && containsAudioRatios {
+		service.PostAudioConsumeQuota(c, info, usage, nil)
+	} else {
+		service.PostTextConsumeQuota(c, info, usage, nil)
+	}
+	return nil
+}
+
+// relayTextRequest converts a text request for the selected channel,
+// sends it, and relays the response to c.Writer.
+func relayTextRequest(c *gin.Context, info *relaycommon.RelayInfo, adaptor channel.Adaptor, request *dto.GeneralOpenAIRequest) (*dto.Usage, *types.NewAPIError) {
+	if info.RelayMode == relayconstant.RelayModeChatCompletions &&
+		service.ShouldChatCompletionsUseResponsesGlobal(info.ChannelId, info.ChannelType, info.OriginModelName) {
+		applySystemPromptIfNeeded(c, info, request)
+		return textRequestViaResponses(c, info, adaptor, request)
+	}
+
+	// Model-routed gateways may return a different request DTO. Apply the
+	// channel prompt while this is still a Chat request, once per attempt.
+	modelRouted := constant.IsModelRoutedChannel(info.ChannelType)
+	if modelRouted {
+		applySystemPromptIfNeeded(c, info, request)
+	}
+	convertedRequest, err := adaptor.ConvertOpenAIRequest(c, info, request)
+	if err != nil {
+		return nil, newConvertRequestFailedError(c, info, err)
+	}
+	relaycommon.AppendRequestConversionFromRequest(info, convertedRequest)
+
+	if req, ok := convertedRequest.(*dto.GeneralOpenAIRequest); ok && !modelRouted {
+		applySystemPromptIfNeeded(c, info, req)
+	}
+
+	jsonData, err := common.Marshal(convertedRequest)
+	if err != nil {
+		return nil, types.NewError(err, types.ErrorCodeJsonMarshalFailed, types.ErrOptionWithSkipRetry())
+	}
+
+	// remove disabled fields for OpenAI API
+	jsonData, err = relaycommon.RemoveDisabledFields(jsonData, info.ChannelOtherSettings, info.ChannelSetting.PassThroughBodyEnabled)
+	if err != nil {
+		return nil, types.NewError(err, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
+	}
+
+	// apply param override
+	if len(info.ParamOverride) > 0 {
+		jsonData, err = relaycommon.ApplyParamOverrideWithRelayInfo(jsonData, info)
+		if err != nil {
+			return nil, newAPIErrorFromParamOverride(err)
+		}
+	}
+
+	logger.LogDebug(c, "text request body: %s", jsonData)
+
+	body, closer, err := relaycommon.NewOutboundJSONBody(jsonData)
+	if err != nil {
+		return nil, types.NewError(err, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
+	}
+	defer closer.Close()
+	jsonData = nil
+	return doRelayRequest(c, info, adaptor, body)
+}
+
+// doRelayRequest sends a prepared request body and relays the response.
+func doRelayRequest(c *gin.Context, info *relaycommon.RelayInfo, adaptor channel.Adaptor, requestBody io.Reader) (*dto.Usage, *types.NewAPIError) {
 	var httpResp *http.Response
 	resp, err := adaptor.DoRequest(c, info, requestBody)
 	if err != nil {
-		return types.NewOpenAIError(err, types.ErrorCodeDoRequestFailed, http.StatusInternalServerError)
+		return nil, types.NewOpenAIError(err, types.ErrorCodeDoRequestFailed, http.StatusInternalServerError)
 	}
 
 	statusCodeMappingStr := c.GetString("status_code_mapping")
@@ -167,27 +182,18 @@ func TextHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *types
 		httpResp = resp.(*http.Response)
 		info.IsStream = info.IsStream || strings.HasPrefix(httpResp.Header.Get("Content-Type"), "text/event-stream")
 		if httpResp.StatusCode != http.StatusOK {
-			newApiErr := service.RelayErrorHandler(c.Request.Context(), httpResp, false)
+			newAPIError := service.RelayErrorHandler(c.Request.Context(), httpResp, false)
 			// reset status code 重置状态码
-			service.ResetStatusCode(newApiErr, statusCodeMappingStr)
-			return newApiErr
+			service.ResetStatusCode(newAPIError, statusCodeMappingStr)
+			return nil, newAPIError
 		}
 	}
 
-	usage, newApiErr := adaptor.DoResponse(c, httpResp, info)
-	if newApiErr != nil {
+	usage, newAPIError := adaptor.DoResponse(c, httpResp, info)
+	if newAPIError != nil {
 		// reset status code 重置状态码
-		service.ResetStatusCode(newApiErr, statusCodeMappingStr)
-		return newApiErr
+		service.ResetStatusCode(newAPIError, statusCodeMappingStr)
+		return nil, newAPIError
 	}
-
-	var containAudioTokens = usage.(*dto.Usage).CompletionTokenDetails.AudioTokens > 0 || usage.(*dto.Usage).PromptTokensDetails.AudioTokens > 0
-	var containsAudioRatios = ratio_setting.ContainsAudioRatio(info.OriginModelName) || ratio_setting.ContainsAudioCompletionRatio(info.OriginModelName)
-
-	if containAudioTokens && containsAudioRatios {
-		service.PostAudioConsumeQuota(c, info, usage.(*dto.Usage), nil)
-	} else {
-		service.PostTextConsumeQuota(c, info, usage.(*dto.Usage), nil)
-	}
-	return nil
+	return usage.(*dto.Usage), nil
 }

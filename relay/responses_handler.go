@@ -8,6 +8,7 @@ import (
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/relay/helper"
+	"github.com/QuantumNous/new-api/relay/webtools"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/service"
@@ -46,39 +47,25 @@ func ResponsesHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *
 		)
 	}
 
-	adaptor, requestBody, closer, apiErr := PrepareResponsesRequest(c, info, responsesReq)
-	if apiErr != nil {
-		return apiErr
-	}
-	defer closer.Close()
-
-	var httpResp *http.Response
-	resp, err := adaptor.DoRequest(c, info, requestBody)
-	if err != nil {
-		return types.NewOpenAIError(err, types.ErrorCodeDoRequestFailed, http.StatusInternalServerError)
-	}
-
-	statusCodeMappingStr := c.GetString("status_code_mapping")
-
-	if resp != nil {
-		httpResp = resp.(*http.Response)
-
-		if httpResp.StatusCode != http.StatusOK {
-			newAPIError = service.RelayErrorHandler(c.Request.Context(), httpResp, false)
-			// reset status code 重置状态码
-			service.ResetStatusCode(newAPIError, statusCodeMappingStr)
-			return newAPIError
+	if info.RelayMode == relayconstant.RelayModeResponses {
+		info.InitChannelMeta(c)
+		if webtools.GatewayMode(c, info) {
+			backend := webtools.NewBackend(c, info)
+			if tools := responsesHostedWebTools(responsesReq, backend); tools != nil {
+				usage, apiErr := relayResponsesWithWebTools(c, info, responsesReq, tools, backend)
+				if apiErr != nil {
+					return apiErr
+				}
+				ConsumeResponsesQuota(c, info, usage)
+				return nil
+			}
 		}
 	}
 
-	usage, newAPIError := adaptor.DoResponse(c, httpResp, info)
+	usageDto, newAPIError := relayResponses(c, info, responsesReq)
 	if newAPIError != nil {
-		// reset status code 重置状态码
-		service.ResetStatusCode(newAPIError, statusCodeMappingStr)
 		return newAPIError
 	}
-
-	usageDto := usage.(*dto.Usage)
 	if info.RelayMode == relayconstant.RelayModeResponsesCompact {
 		originModelName := info.OriginModelName
 		originPriceData := info.PriceData
@@ -98,6 +85,43 @@ func ResponsesHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *
 
 	ConsumeResponsesQuota(c, info, usageDto)
 	return nil
+}
+
+// relayResponses prepares a Responses request for the selected channel,
+// sends it, and relays the response to c.Writer.
+func relayResponses(c *gin.Context, info *relaycommon.RelayInfo, request *dto.OpenAIResponsesRequest) (*dto.Usage, *types.NewAPIError) {
+	adaptor, requestBody, closer, apiErr := PrepareResponsesRequest(c, info, request)
+	if apiErr != nil {
+		return nil, apiErr
+	}
+	defer closer.Close()
+
+	var httpResp *http.Response
+	resp, err := adaptor.DoRequest(c, info, requestBody)
+	if err != nil {
+		return nil, types.NewOpenAIError(err, types.ErrorCodeDoRequestFailed, http.StatusInternalServerError)
+	}
+
+	statusCodeMappingStr := c.GetString("status_code_mapping")
+
+	if resp != nil {
+		httpResp = resp.(*http.Response)
+
+		if httpResp.StatusCode != http.StatusOK {
+			newAPIError := service.RelayErrorHandler(c.Request.Context(), httpResp, false)
+			// reset status code 重置状态码
+			service.ResetStatusCode(newAPIError, statusCodeMappingStr)
+			return nil, newAPIError
+		}
+	}
+
+	usage, newAPIError := adaptor.DoResponse(c, httpResp, info)
+	if newAPIError != nil {
+		// reset status code 重置状态码
+		service.ResetStatusCode(newAPIError, statusCodeMappingStr)
+		return nil, newAPIError
+	}
+	return usage.(*dto.Usage), nil
 }
 
 // ConsumeResponsesQuota applies the same settlement dispatch to HTTP and
