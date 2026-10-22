@@ -50,6 +50,16 @@ func TestChannelValidateSettingsRejectsInvalidHTTPTransport(t *testing.T) {
 	}
 }
 
+func TestChannelValidateSettingsChecksWebToolsMode(t *testing.T) {
+	channel := &Channel{OtherSettings: `{"web_tools_mode":"gateway"}`}
+	require.NoError(t, channel.ValidateSettings())
+
+	channel.OtherSettings = `{"web_tools_mode":"always"}`
+	err := channel.ValidateSettings()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "web_tools_mode")
+}
+
 func TestAdvancedCustomChannelRequiresModelListRouteOnlyWhenUpdateChecksEnabled(t *testing.T) {
 	inferenceRoute := dto.AdvancedCustomRoute{
 		IncomingPath: "/v1/chat/completions",

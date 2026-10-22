@@ -737,6 +737,17 @@ func TestChannelOtherSettingsValidateToolLossPolicy(t *testing.T) {
 	assert.Contains(t, err.Error(), "tool_loss_policy")
 }
 
+func TestChannelOtherSettingsValidateWebToolsMode(t *testing.T) {
+	require.NoError(t, (*ChannelOtherSettings)(nil).ValidateWebToolsMode())
+	for _, mode := range []string{"", "native", "gateway"} {
+		require.NoError(t, (&ChannelOtherSettings{WebToolsMode: mode}).ValidateWebToolsMode(), mode)
+	}
+
+	err := (&ChannelOtherSettings{WebToolsMode: "Gateway"}).ValidateWebToolsMode()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "web_tools_mode")
+}
+
 func TestChannelOtherSettingsValidateModelProtocolRules(t *testing.T) {
 	valid := &ChannelOtherSettings{ModelProtocolRules: []ModelProtocolRule{
 		{Pattern: "claude-*", Protocol: ModelProtocolAnthropic},

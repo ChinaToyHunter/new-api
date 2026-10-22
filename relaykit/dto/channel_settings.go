@@ -143,6 +143,10 @@ type ChannelOtherSettings struct {
 	// of a model-routed channel (OpenCode Zen/Go, Command Code). The first
 	// matching rule wins; models no rule matches skip the built-in table.
 	ModelProtocolRules []ModelProtocolRule `json:"model_protocol_rules,omitempty"`
+	// WebToolsMode selects who runs the hosted web search and page fetch tools
+	// of requests on this channel: "native" forwards them to the upstream,
+	// "gateway" runs them in the host. Empty follows the global default.
+	WebToolsMode string `json:"web_tools_mode,omitempty"`
 }
 
 func (s *ChannelOtherSettings) IsOpenRouterEnterprise() bool {
@@ -150,6 +154,20 @@ func (s *ChannelOtherSettings) IsOpenRouterEnterprise() bool {
 		return false
 	}
 	return *s.OpenRouterEnterprise
+}
+
+// ValidateWebToolsMode validates the channel-level hosted web tools mode.
+// Empty follows the global default.
+func (s *ChannelOtherSettings) ValidateWebToolsMode() error {
+	if s == nil {
+		return nil
+	}
+	switch s.WebToolsMode {
+	case "", "native", "gateway":
+		return nil
+	default:
+		return fmt.Errorf("invalid web_tools_mode: %s", s.WebToolsMode)
+	}
 }
 
 // ValidateToolLossPolicy validates the channel-level request-phase tool-loss
