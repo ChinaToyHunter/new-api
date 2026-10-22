@@ -128,7 +128,7 @@ func TestRealtimeFetchRefundsTaskItFindsFailed(t *testing.T) {
 	assert.Zero(t, stored.Quota, "the failed task is refunded")
 	var user model.User
 	require.NoError(t, database.First(&user, 7).Error)
-	assert.Equal(t, 1100, user.Quota)
+	assert.Equal(t, int64(1100), user.Quota)
 }
 
 func TestApplyChannelPinPreservesOriginTasksAndRetryMode(t *testing.T) {
