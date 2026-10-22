@@ -7515,6 +7515,25 @@
     "Command Code API key": "API-ключ Command Code",
     "OpenCode Zen": "OpenCode Zen",
     "OpenCode Go": "OpenCode Go",
-    "Command Code": "Command Code"
+    "Command Code": "Command Code",
+    "Web Tools": "Веб-инструменты",
+    "Run hosted web tools in the gateway": "Выполнять размещённые веб-инструменты в шлюзе",
+    "Runs hosted web search and page fetch with the DeepSeek Search and Fetch APIs through the channels serving deepseek-search and deepseek-fetch. Calls are billed at the web_search and web_fetch tool prices.": "Выполняет размещённый веб-поиск и загрузку страниц через DeepSeek Search и Fetch API по каналам, обслуживающим deepseek-search и deepseek-fetch. Вызовы оплачиваются по ценам инструментов web_search и web_fetch.",
+    "Default web tools mode": "Режим веб-инструментов по умолчанию",
+    "Native: upstream runs the tools": "Нативный: инструменты выполняет источник",
+    "Gateway: New API runs the tools": "Шлюз: инструменты выполняет New API",
+    "Applies to channels without their own web tools mode.": "Применяется к каналам без собственного режима веб-инструментов.",
+    "Native affinity rules": "Нативные правила привязки",
+    "Requests matched by these channel affinity rules keep the upstream tools on channels without their own mode, such as the Claude Code and Codex CLI traces. One rule name per line.": "Запросы, совпавшие с этими правилами привязки к каналу, сохраняют инструменты источника на каналах без собственного режима, например трассировки CLI Claude Code и Codex. По одному имени правила в строке.",
+    "Tool channel group": "Группа каналов инструментов",
+    "Group whose deepseek-search and deepseek-fetch channels run gateway calls. Empty uses the group of the request.": "Группа, каналы deepseek-search и deepseek-fetch которой выполняют вызовы шлюза. Пусто — группа запроса.",
+    "Max tool calls per request": "Макс. вызовов инструментов на запрос",
+    "Up to 32 gateway tool calls in one request.": "До 32 вызовов инструментов шлюза за запрос.",
+    "Search results per call": "Результатов на поиск",
+    "Up to 20 results for each gateway search.": "До 20 результатов на каждый поиск шлюза.",
+    "Fetch character limit": "Лимит символов страницы",
+    "Page text passed to the model, 1,000 to 200,000 characters.": "Текст страницы для модели: от 1 000 до 200 000 символов.",
+    "Web tools mode": "Режим веб-инструментов",
+    "Who runs hosted web search and page fetch for requests on this channel.": "Определяет, кто выполняет размещённый веб-поиск и загрузку страниц для запросов этого канала."
   }
 }

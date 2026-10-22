@@ -7515,6 +7515,25 @@
     "Command Code API key": "Clé API Command Code",
     "OpenCode Zen": "OpenCode Zen",
     "OpenCode Go": "OpenCode Go",
-    "Command Code": "Command Code"
+    "Command Code": "Command Code",
+    "Web Tools": "Outils web",
+    "Run hosted web tools in the gateway": "Exécuter les outils web hébergés dans la passerelle",
+    "Runs hosted web search and page fetch with the DeepSeek Search and Fetch APIs through the channels serving deepseek-search and deepseek-fetch. Calls are billed at the web_search and web_fetch tool prices.": "Exécute la recherche web et la lecture de pages hébergées avec les API DeepSeek Search et Fetch, via les canaux qui servent deepseek-search et deepseek-fetch. Les appels sont facturés aux prix des outils web_search et web_fetch.",
+    "Default web tools mode": "Mode par défaut des outils web",
+    "Native: upstream runs the tools": "Natif : l'amont exécute les outils",
+    "Gateway: New API runs the tools": "Passerelle : New API exécute les outils",
+    "Applies to channels without their own web tools mode.": "S'applique aux canaux sans mode d'outils web propre.",
+    "Native affinity rules": "Règles d'affinité natives",
+    "Requests matched by these channel affinity rules keep the upstream tools on channels without their own mode, such as the Claude Code and Codex CLI traces. One rule name per line.": "Les requêtes correspondant à ces règles d'affinité de canal conservent les outils de l'amont sur les canaux sans mode propre, comme les traces CLI de Claude Code et Codex. Un nom de règle par ligne.",
+    "Tool channel group": "Groupe des canaux d'outils",
+    "Group whose deepseek-search and deepseek-fetch channels run gateway calls. Empty uses the group of the request.": "Groupe dont les canaux deepseek-search et deepseek-fetch exécutent les appels de la passerelle. Vide : groupe de la requête.",
+    "Max tool calls per request": "Appels d'outils max. par requête",
+    "Up to 32 gateway tool calls in one request.": "Jusqu'à 32 appels d'outils de la passerelle par requête.",
+    "Search results per call": "Résultats par recherche",
+    "Up to 20 results for each gateway search.": "Jusqu'à 20 résultats par recherche de la passerelle.",
+    "Fetch character limit": "Limite de caractères de lecture",
+    "Page text passed to the model, 1,000 to 200,000 characters.": "Texte de page transmis au modèle, de 1 000 à 200 000 caractères.",
+    "Web tools mode": "Mode des outils web",
+    "Who runs hosted web search and page fetch for requests on this channel.": "Détermine qui exécute la recherche web et la lecture de pages hébergées pour les requêtes de ce canal."
   }
 }

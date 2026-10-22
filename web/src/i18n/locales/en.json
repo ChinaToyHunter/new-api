@@ -7515,6 +7515,25 @@
     "Command Code API key": "Command Code API key",
     "OpenCode Zen": "OpenCode Zen",
     "OpenCode Go": "OpenCode Go",
-    "Command Code": "Command Code"
+    "Command Code": "Command Code",
+    "Web Tools": "Web Tools",
+    "Run hosted web tools in the gateway": "Run hosted web tools in the gateway",
+    "Runs hosted web search and page fetch with the DeepSeek Search and Fetch APIs through the channels serving deepseek-search and deepseek-fetch. Calls are billed at the web_search and web_fetch tool prices.": "Runs hosted web search and page fetch with the DeepSeek Search and Fetch APIs through the channels serving deepseek-search and deepseek-fetch. Calls are billed at the web_search and web_fetch tool prices.",
+    "Default web tools mode": "Default web tools mode",
+    "Native: upstream runs the tools": "Native: upstream runs the tools",
+    "Gateway: New API runs the tools": "Gateway: New API runs the tools",
+    "Applies to channels without their own web tools mode.": "Applies to channels without their own web tools mode.",
+    "Native affinity rules": "Native affinity rules",
+    "Requests matched by these channel affinity rules keep the upstream tools on channels without their own mode, such as the Claude Code and Codex CLI traces. One rule name per line.": "Requests matched by these channel affinity rules keep the upstream tools on channels without their own mode, such as the Claude Code and Codex CLI traces. One rule name per line.",
+    "Tool channel group": "Tool channel group",
+    "Group whose deepseek-search and deepseek-fetch channels run gateway calls. Empty uses the group of the request.": "Group whose deepseek-search and deepseek-fetch channels run gateway calls. Empty uses the group of the request.",
+    "Max tool calls per request": "Max tool calls per request",
+    "Up to 32 gateway tool calls in one request.": "Up to 32 gateway tool calls in one request.",
+    "Search results per call": "Search results per call",
+    "Up to 20 results for each gateway search.": "Up to 20 results for each gateway search.",
+    "Fetch character limit": "Fetch character limit",
+    "Page text passed to the model, 1,000 to 200,000 characters.": "Page text passed to the model, 1,000 to 200,000 characters.",
+    "Web tools mode": "Web tools mode",
+    "Who runs hosted web search and page fetch for requests on this channel.": "Who runs hosted web search and page fetch for requests on this channel."
   }
 }

@@ -7515,6 +7515,25 @@
     "Command Code API key": "Command Code API 金鑰",
     "OpenCode Zen": "OpenCode Zen",
     "OpenCode Go": "OpenCode Go",
-    "Command Code": "Command Code"
+    "Command Code": "Command Code",
+    "Web Tools": "聯網工具",
+    "Run hosted web tools in the gateway": "由閘道執行託管聯網工具",
+    "Runs hosted web search and page fetch with the DeepSeek Search and Fetch APIs through the channels serving deepseek-search and deepseek-fetch. Calls are billed at the web_search and web_fetch tool prices.": "透過提供 deepseek-search 與 deepseek-fetch 的渠道，使用 DeepSeek Search 與 Fetch API 執行託管的網頁搜尋與網頁讀取。呼叫按 web_search 與 web_fetch 的工具價格計費。",
+    "Default web tools mode": "預設聯網工具模式",
+    "Native: upstream runs the tools": "原生：由上游執行工具",
+    "Gateway: New API runs the tools": "閘道：由 New API 執行工具",
+    "Applies to channels without their own web tools mode.": "適用於未單獨設定聯網工具模式的渠道。",
+    "Native affinity rules": "原生親和規則",
+    "Requests matched by these channel affinity rules keep the upstream tools on channels without their own mode, such as the Claude Code and Codex CLI traces. One rule name per line.": "符合這些渠道親和性規則的請求，在未單獨設定模式的渠道上保留上游自帶工具，例如 Claude Code 與 Codex 的 CLI trace。每行一個規則名稱。",
+    "Tool channel group": "工具渠道分組",
+    "Group whose deepseek-search and deepseek-fetch channels run gateway calls. Empty uses the group of the request.": "由該分組中提供 deepseek-search 與 deepseek-fetch 的渠道執行閘道呼叫。留空則使用請求所在分組。",
+    "Max tool calls per request": "每次請求最多工具呼叫次數",
+    "Up to 32 gateway tool calls in one request.": "單次請求最多 32 次閘道工具呼叫。",
+    "Search results per call": "每次搜尋結果數",
+    "Up to 20 results for each gateway search.": "每次閘道搜尋最多回傳 20 筆結果。",
+    "Fetch character limit": "網頁讀取字元上限",
+    "Page text passed to the model, 1,000 to 200,000 characters.": "傳給模型的網頁正文長度，範圍 1,000 至 200,000 個字元。",
+    "Web tools mode": "聯網工具模式",
+    "Who runs hosted web search and page fetch for requests on this channel.": "決定由誰為此渠道上的請求執行託管的網頁搜尋與網頁讀取。"
   }
 }

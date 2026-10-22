@@ -23,6 +23,7 @@ import { ClaudeSettingsCard } from './claude-settings-card'
 import { GeminiSettingsCard } from './gemini-settings-card'
 import { GlobalSettingsCard } from './global-settings-card'
 import { GrokSettingsCard } from './grok-settings-card'
+import { WebToolsSettingsCard } from './web-tools-settings-card'
 
 function formatJsonForEditor(value: string, fallback: string) {
   const raw = (value ?? '').toString().trim()
@@ -116,6 +117,29 @@ const MODELS_SECTIONS = [
             settings['grok.violation_deduction_enabled'] ?? true,
           'grok.violation_deduction_amount':
             settings['grok.violation_deduction_amount'] ?? 0.05,
+        }}
+      />
+    ),
+  },
+  {
+    id: 'web-tools',
+    titleKey: 'Web Tools',
+    build: (settings: ModelSettings) => (
+      <WebToolsSettingsCard
+        defaultValues={{
+          'web_tools_setting.enabled': settings['web_tools_setting.enabled'],
+          'web_tools_setting.default_mode':
+            settings['web_tools_setting.default_mode'],
+          'web_tools_setting.native_affinity_rules':
+            settings['web_tools_setting.native_affinity_rules'],
+          'web_tools_setting.tool_group':
+            settings['web_tools_setting.tool_group'],
+          'web_tools_setting.max_calls_per_request':
+            settings['web_tools_setting.max_calls_per_request'],
+          'web_tools_setting.search_result_count':
+            settings['web_tools_setting.search_result_count'],
+          'web_tools_setting.fetch_max_chars':
+            settings['web_tools_setting.fetch_max_chars'],
         }}
       />
     ),

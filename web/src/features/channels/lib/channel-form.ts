@@ -328,6 +328,7 @@ export const channelFormSchema = z
     claude_beta_query: z.boolean().optional(), // Anthropic: beta query passthrough
     ollama_openai_chat: z.boolean().optional(), // Ollama: OpenAI-compatible /v1/chat/completions instead of native /api/chat
     model_protocol_rules: z.string().optional(),
+    web_tools_mode: z.enum(['', 'native', 'gateway']).optional(),
     disable_task_polling_sleep: z.boolean().optional(),
     // Upstream model update settings (stored in settings JSON)
     upstream_model_update_check_enabled: z.boolean().optional(),
@@ -534,6 +535,7 @@ export const CHANNEL_FORM_DEFAULT_VALUES: ChannelFormValues = {
   claude_beta_query: false,
   ollama_openai_chat: false,
   model_protocol_rules: '',
+  web_tools_mode: '',
   disable_task_polling_sleep: false,
   upstream_model_update_check_enabled: false,
   upstream_model_update_auto_sync_enabled: false,
@@ -611,6 +613,7 @@ export function transformChannelToFormDefaults(
   let claudeBetaQuery = false
   let ollamaOpenAIChat = false
   let modelProtocolRules = ''
+  let webToolsMode: '' | 'native' | 'gateway' = ''
   let disableTaskPollingSleep = false
   let upstreamModelUpdateCheckEnabled = false
   let upstreamModelUpdateAutoSyncEnabled = false
@@ -640,6 +643,12 @@ export function transformChannelToFormDefaults(
           null,
           2
         )
+      }
+      if (
+        parsed.web_tools_mode === 'native' ||
+        parsed.web_tools_mode === 'gateway'
+      ) {
+        webToolsMode = parsed.web_tools_mode
       }
       disableTaskPollingSleep = parsed.disable_task_polling_sleep === true
       upstreamModelUpdateCheckEnabled =
@@ -704,6 +713,7 @@ export function transformChannelToFormDefaults(
     claude_beta_query: claudeBetaQuery,
     ollama_openai_chat: ollamaOpenAIChat,
     model_protocol_rules: modelProtocolRules,
+    web_tools_mode: webToolsMode,
     disable_task_polling_sleep: disableTaskPollingSleep,
     allow_safety_identifier: allowSafetyIdentifier,
     upstream_model_update_check_enabled: upstreamModelUpdateCheckEnabled,
@@ -876,6 +886,13 @@ function buildSettingsJSON(formData: ChannelFormValues): string {
     settingsObj.model_protocol_rules = JSON.parse(formData.model_protocol_rules)
   } else {
     delete settingsObj.model_protocol_rules
+  }
+
+  // Empty follows the global web tools mode.
+  if (formData.web_tools_mode) {
+    settingsObj.web_tools_mode = formData.web_tools_mode
+  } else {
+    delete settingsObj.web_tools_mode
   }
 
   settingsObj.disable_task_polling_sleep =

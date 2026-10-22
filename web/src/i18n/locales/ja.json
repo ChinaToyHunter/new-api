@@ -7515,6 +7515,25 @@
     "Command Code API key": "Command Code APIキー",
     "OpenCode Zen": "OpenCode Zen",
     "OpenCode Go": "OpenCode Go",
-    "Command Code": "Command Code"
+    "Command Code": "Command Code",
+    "Web Tools": "Web ツール",
+    "Run hosted web tools in the gateway": "ホスト型 Web ツールをゲートウェイで実行",
+    "Runs hosted web search and page fetch with the DeepSeek Search and Fetch APIs through the channels serving deepseek-search and deepseek-fetch. Calls are billed at the web_search and web_fetch tool prices.": "deepseek-search と deepseek-fetch を提供するチャネル経由で、DeepSeek Search と Fetch API を使ってホスト型の Web 検索とページ取得を実行します。呼び出しは web_search と web_fetch のツール価格で課金されます。",
+    "Default web tools mode": "Web ツールのデフォルトモード",
+    "Native: upstream runs the tools": "ネイティブ：上流がツールを実行",
+    "Gateway: New API runs the tools": "ゲートウェイ：New API がツールを実行",
+    "Applies to channels without their own web tools mode.": "独自の Web ツールモードを設定していないチャネルに適用されます。",
+    "Native affinity rules": "ネイティブのアフィニティルール",
+    "Requests matched by these channel affinity rules keep the upstream tools on channels without their own mode, such as the Claude Code and Codex CLI traces. One rule name per line.": "これらのチャネルアフィニティルールに一致したリクエストは、独自モードのないチャネルで上流のツールを維持します（Claude Code や Codex の CLI trace など）。1 行に 1 つのルール名を入力します。",
+    "Tool channel group": "ツールチャネルのグループ",
+    "Group whose deepseek-search and deepseek-fetch channels run gateway calls. Empty uses the group of the request.": "このグループの deepseek-search と deepseek-fetch チャネルがゲートウェイ呼び出しを実行します。空欄の場合はリクエストのグループを使用します。",
+    "Max tool calls per request": "1 リクエストあたりの最大ツール呼び出し数",
+    "Up to 32 gateway tool calls in one request.": "1 リクエストあたり最大 32 回のゲートウェイツール呼び出し。",
+    "Search results per call": "検索あたりの結果数",
+    "Up to 20 results for each gateway search.": "ゲートウェイ検索ごとに最大 20 件の結果。",
+    "Fetch character limit": "ページ取得の文字数上限",
+    "Page text passed to the model, 1,000 to 200,000 characters.": "モデルに渡すページ本文。1,000〜200,000 文字。",
+    "Web tools mode": "Web ツールモード",
+    "Who runs hosted web search and page fetch for requests on this channel.": "このチャネルのリクエストで、ホスト型の Web 検索とページ取得を誰が実行するかを指定します。"
   }
 }

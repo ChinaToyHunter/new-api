@@ -247,6 +247,13 @@ export type ModelSettings = {
   'claude.thinking_adapter_budget_tokens_percentage': number
   'grok.violation_deduction_enabled': boolean
   'grok.violation_deduction_amount': number
+  'web_tools_setting.enabled': boolean
+  'web_tools_setting.default_mode': string
+  'web_tools_setting.native_affinity_rules': string[]
+  'web_tools_setting.tool_group': string
+  'web_tools_setting.max_calls_per_request': number
+  'web_tools_setting.search_result_count': number
+  'web_tools_setting.fetch_max_chars': number
   ModelPrice: string
   ModelRatio: string
   CacheRatio: string

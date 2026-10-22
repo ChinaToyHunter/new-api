@@ -64,6 +64,7 @@ const CONFIGURATION_BLOCKS = {
       'responses_websocket_enabled',
       'ollama_openai_chat',
       'model_protocol_rules',
+      'web_tools_mode',
       'system_prompt',
       'system_prompt_override',
     ],
@@ -162,6 +163,7 @@ export function getChannelConfigurationState(
       (values.type === CHANNEL_TYPE_OLLAMA && values.ollama_openai_chat) ||
       (MODEL_ROUTED_CHANNEL_TYPES.has(values.type) &&
         hasConfiguredJson(values.model_protocol_rules)) ||
+      values.web_tools_mode ||
       values.system_prompt?.trim() ||
       values.system_prompt_override
     ),

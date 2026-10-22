@@ -7515,6 +7515,25 @@
     "Command Code API key": "Khóa API Command Code",
     "OpenCode Zen": "OpenCode Zen",
     "OpenCode Go": "OpenCode Go",
-    "Command Code": "Command Code"
+    "Command Code": "Command Code",
+    "Web Tools": "Công cụ web",
+    "Run hosted web tools in the gateway": "Chạy công cụ web được lưu trữ tại cổng",
+    "Runs hosted web search and page fetch with the DeepSeek Search and Fetch APIs through the channels serving deepseek-search and deepseek-fetch. Calls are billed at the web_search and web_fetch tool prices.": "Chạy tìm kiếm web và tải trang được lưu trữ bằng DeepSeek Search và Fetch API qua các kênh cung cấp deepseek-search và deepseek-fetch. Các lệnh gọi được tính theo giá công cụ web_search và web_fetch.",
+    "Default web tools mode": "Chế độ công cụ web mặc định",
+    "Native: upstream runs the tools": "Gốc: thượng nguồn chạy công cụ",
+    "Gateway: New API runs the tools": "Cổng: New API chạy công cụ",
+    "Applies to channels without their own web tools mode.": "Áp dụng cho các kênh không đặt chế độ công cụ web riêng.",
+    "Native affinity rules": "Quy tắc ưu tiên gốc",
+    "Requests matched by these channel affinity rules keep the upstream tools on channels without their own mode, such as the Claude Code and Codex CLI traces. One rule name per line.": "Yêu cầu khớp các quy tắc ưu tiên kênh này giữ công cụ của thượng nguồn trên các kênh không có chế độ riêng, như CLI trace của Claude Code và Codex. Mỗi dòng một tên quy tắc.",
+    "Tool channel group": "Nhóm kênh công cụ",
+    "Group whose deepseek-search and deepseek-fetch channels run gateway calls. Empty uses the group of the request.": "Nhóm có các kênh deepseek-search và deepseek-fetch thực hiện lệnh gọi của cổng. Để trống sẽ dùng nhóm của yêu cầu.",
+    "Max tool calls per request": "Số lệnh gọi công cụ tối đa mỗi yêu cầu",
+    "Up to 32 gateway tool calls in one request.": "Tối đa 32 lệnh gọi công cụ của cổng trong một yêu cầu.",
+    "Search results per call": "Số kết quả mỗi lần tìm",
+    "Up to 20 results for each gateway search.": "Tối đa 20 kết quả cho mỗi lần tìm kiếm của cổng.",
+    "Fetch character limit": "Giới hạn ký tự khi tải trang",
+    "Page text passed to the model, 1,000 to 200,000 characters.": "Văn bản trang chuyển cho mô hình, từ 1.000 đến 200.000 ký tự.",
+    "Web tools mode": "Chế độ công cụ web",
+    "Who runs hosted web search and page fetch for requests on this channel.": "Xác định ai chạy tìm kiếm web và tải trang được lưu trữ cho các yêu cầu trên kênh này."
   }
 }

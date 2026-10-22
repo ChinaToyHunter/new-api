@@ -118,6 +118,7 @@ export interface ChannelOtherSettings {
   upstream_model_update_last_detected_models?: string[]
   advanced_custom?: AdvancedCustomConfig
   model_protocol_rules?: ModelProtocolRule[]
+  web_tools_mode?: 'native' | 'gateway'
 }
 
 export interface ModelProtocolRule {

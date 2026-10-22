@@ -317,6 +317,7 @@ const SENSITIVE_FORM_FIELDS = [
   'claude_beta_query',
   'ollama_openai_chat',
   'model_protocol_rules',
+  'web_tools_mode',
   'disable_task_polling_sleep',
   'upstream_model_update_check_enabled',
   'upstream_model_update_auto_sync_enabled',
@@ -1923,6 +1924,59 @@ export function ChannelMutateDrawer({
               }}
             />
           </FormControl>
+        </FormItem>
+      )}
+    />
+  )
+
+  const webToolsModeFields = (
+    <FormField
+      control={form.control}
+      name='web_tools_mode'
+      render={({ field }) => (
+        <FormItem>
+          <FormLabel>{t('Web tools mode')}</FormLabel>
+          <Select
+            disabled={sensitiveLocked}
+            items={[
+              { value: 'inherit', label: t('Inherit global default') },
+              { value: 'native', label: t('Native: upstream runs the tools') },
+              { value: 'gateway', label: t('Gateway: New API runs the tools') },
+            ]}
+            value={field.value || 'inherit'}
+            onValueChange={(value) => {
+              if (value === 'native' || value === 'gateway') {
+                field.onChange(value)
+                return
+              }
+              field.onChange('')
+            }}
+          >
+            <FormControl>
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+            </FormControl>
+            <SelectContent alignItemWithTrigger={false}>
+              <SelectGroup>
+                <SelectItem value='inherit'>
+                  {t('Inherit global default')}
+                </SelectItem>
+                <SelectItem value='native'>
+                  {t('Native: upstream runs the tools')}
+                </SelectItem>
+                <SelectItem value='gateway'>
+                  {t('Gateway: New API runs the tools')}
+                </SelectItem>
+              </SelectGroup>
+            </SelectContent>
+          </Select>
+          <FormDescription>
+            {t(
+              'Who runs hosted web search and page fetch for requests on this channel.'
+            )}
+          </FormDescription>
+          <FormMessage />
         </FormItem>
       )}
     />
@@ -4821,6 +4875,7 @@ export function ChannelMutateDrawer({
                 {thinkingFields}
                 {currentType !== CHANNEL_TYPE_ADVANCED_CUSTOM &&
                   passthroughFields}
+                {webToolsModeFields}
                 {systemPromptFields}
                 {systemPromptOverrideFields}
               </fieldset>
