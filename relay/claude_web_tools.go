@@ -3,6 +3,7 @@ package relay
 import (
 	"cmp"
 	"encoding/base64"
+	"encoding/json"
 	"maps"
 	"net/http"
 	"strings"
@@ -111,8 +112,22 @@ func gatewayClaudeRequest(request *dto.ClaudeRequest, tools map[string]*hostedWe
 	if err != nil {
 		return nil, err
 	}
-	rewritten := make([]any, 0, len(upstream.GetTools()))
-	for _, tool := range upstream.GetTools() {
+	// Client tools stay raw so their schema property order reaches the
+	// upstream; GetTools returns decoded copies, which would re-encode sorted.
+	var clientTools []any
+	if raw, ok := upstream.Tools.(json.RawMessage); ok {
+		var items []json.RawMessage
+		if err := common.Unmarshal(raw, &items); err != nil {
+			return nil, err
+		}
+		for _, item := range items {
+			clientTools = append(clientTools, item)
+		}
+	} else {
+		clientTools = upstream.GetTools()
+	}
+	rewritten := make([]any, 0, len(clientTools))
+	for _, tool := range clientTools {
 		if definition, ok := claudeToolDefinition(tool); ok && claudeHostedToolKind(definition) != "" {
 			name := common.Interface2String(definition["name"])
 			if name == "" {

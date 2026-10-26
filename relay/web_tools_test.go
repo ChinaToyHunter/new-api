@@ -46,6 +46,7 @@ func (b *fakeWebToolsBackend) Fetch(*gin.Context, string) (*webtools.Page, error
 type webToolsUpstream struct {
 	mu       sync.Mutex
 	requests []map[string]any
+	bodies   []string
 	server   *httptest.Server
 }
 
@@ -59,6 +60,7 @@ func newWebToolsUpstream(t *testing.T, reply func(w http.ResponseWriter, round i
 		}
 		upstream.mu.Lock()
 		upstream.requests = append(upstream.requests, request)
+		upstream.bodies = append(upstream.bodies, string(body))
 		round := len(upstream.requests)
 		upstream.mu.Unlock()
 		stream, _ := request["stream"].(bool)
@@ -215,6 +217,23 @@ func runClaudeWebTools(t *testing.T, upstream *webToolsUpstream, request *dto.Cl
 	usage, apiErr := relayClaudeWithWebTools(c, info, adaptor, request, tools, backend)
 	require.Nil(t, apiErr)
 	return recorder, info, usage
+}
+
+// The gateway rewrite must not re-encode client tools: Claude follows the
+// schema property order, and a decoded map would sort it.
+func TestClaudeWebToolsKeepsClientToolSchemaPropertyOrder(t *testing.T) {
+	upstream := newWebToolsUpstream(t, claudeWebToolsReply)
+	backend := &fakeWebToolsBackend{serves: true}
+	var request dto.ClaudeRequest
+	require.NoError(t, common.UnmarshalJsonStr(`{"model":"test-model","max_tokens":1024,"stream":false,`+
+		`"messages":[{"role":"user","content":"When was Go released?"}],`+
+		`"tools":[{"type":"web_search_20250305","name":"web_search"},`+
+		`{"name":"Read","input_schema":{"type":"object","properties":{"path":{"type":"string"},"limit":{"type":"integer"}}}}]}`, &request))
+
+	runClaudeWebTools(t, upstream, &request, backend)
+
+	require.NotEmpty(t, upstream.bodies)
+	assert.Contains(t, upstream.bodies[0], `"properties":{"path":{"type":"string"},"limit":{"type":"integer"}}`)
 }
 
 func TestClaudeWebToolsAnswersSearchAndReturnsOneMessage(t *testing.T) {
@@ -636,7 +655,7 @@ func TestChatWebToolsLeavesGatewayCallsBesideClientCallsUnrun(t *testing.T) {
 	})
 	backend := &fakeWebToolsBackend{serves: true}
 	request := newChatWebToolsRequest(false)
-	request.Tools = []dto.ToolCallRequest{{Type: "function", Function: dto.FunctionRequest{Name: "get_weather", Parameters: map[string]any{"type": "object"}}}}
+	request.Tools = []dto.ToolCallRequest{{Type: "function", Function: dto.FunctionRequest{Name: "get_weather", Parameters: json.RawMessage(`{"type":"object"}`)}}}
 	recorder, info, _ := runChatWebTools(t, upstream, request, backend)
 
 	assert.Len(t, upstream.requests, 1)

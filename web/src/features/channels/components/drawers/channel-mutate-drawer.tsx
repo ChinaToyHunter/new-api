@@ -4873,8 +4873,7 @@ export function ChannelMutateDrawer({
                   disabled={sensitiveLocked || isSubmitting}
                 />
                 {thinkingFields}
-                {currentType !== CHANNEL_TYPE_ADVANCED_CUSTOM &&
-                  passthroughFields}
+                {passthroughFields}
                 {webToolsModeFields}
                 {systemPromptFields}
                 {systemPromptOverrideFields}
@@ -5269,6 +5268,7 @@ export function ChannelMutateDrawer({
         onConfirm={() => handleStatusCodeRiskAction(true)}
       />
       <PassthroughWarningDialog
+        channelType={currentType}
         open={passthroughWarningKind !== null}
         kind={passthroughWarningKind}
         onOpenChange={(v) => {

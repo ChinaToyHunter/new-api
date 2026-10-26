@@ -48,7 +48,11 @@ func gatewayChatRequest(request *dto.GeneralOpenAIRequest, tools map[string]*hos
 	}
 	upstream.WebSearchOptions = nil
 	for _, tool := range orderedWebTools(tools) {
-		description, parameters := webToolFunction(tool.kind)
+		description, schema := webToolFunction(tool.kind)
+		parameters, err := common.Marshal(schema)
+		if err != nil {
+			return nil, err
+		}
 		upstream.Tools = append(upstream.Tools, dto.ToolCallRequest{
 			Type:     "function",
 			Function: dto.FunctionRequest{Name: tool.name, Description: description, Parameters: parameters},
