@@ -1,6 +1,8 @@
 package selfupdate
 
 import (
+	"archive/tar"
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/base64"
@@ -14,6 +16,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -1094,10 +1097,102 @@ func TestEngineClient_BuildImageWithBinary_PreservesImageDefaultCommand(t *testi
 // ErrAlreadyUpToDate sentinel
 // ----------------------------------------------------------------------------
 
+// The release binary is ~131MiB and the container limit is 256MiB. Reading the
+// whole file and then building a second full copy as an in-memory tar needs
+// roughly twice the binary size and has killed the app under that limit.
+func TestEngineClient_BuildImageWithBinary_StreamsArchiveWithoutBuffering(t *testing.T) {
+	const binarySize = 32 << 20 // 32 MiB is enough to separate streaming from double-buffering.
+	const tempContainerID = "stream-temp-container"
+	var received int64
+	mux := newFakeMux()
+	mux.handle(http.MethodPost, "/containers/create", func(w http.ResponseWriter, r *http.Request) {
+		jsonResponse(w, http.StatusCreated, map[string]any{"Id": tempContainerID})
+	})
+	mux.handle(http.MethodPut, "/containers/"+tempContainerID+"/archive", func(w http.ResponseWriter, r *http.Request) {
+		reader := tar.NewReader(r.Body)
+		header, err := reader.Next()
+		require.NoError(t, err)
+		assert.Equal(t, "new-api", header.Name)
+		assert.Equal(t, int64(binarySize), header.Size)
+		count, err := io.Copy(io.Discard, reader)
+		require.NoError(t, err)
+		received = count
+		// Fail after consuming the stream: the client must still clean up.
+		http.Error(w, "archive rejected", http.StatusInternalServerError)
+	})
+	mux.handle(http.MethodDelete, "/containers/"+tempContainerID, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	})
+
+	binaryPath := filepath.Join(t.TempDir(), "new-api")
+	payload := make([]byte, binarySize)
+	require.NoError(t, os.WriteFile(binaryPath, payload, 0o755))
+	payload = nil
+
+	runtime.GC()
+	var before, after runtime.MemStats
+	runtime.ReadMemStats(&before)
+	d := &dockerEngineImpl{client: fakeEngineClient(mux)}
+	err := d.BuildImageWithBinary(context.Background(), "local/new-api:v1", binaryPath, "local/new-api:v2")
+	runtime.ReadMemStats(&after)
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "copy binary into temp container")
+	assert.Equal(t, int64(binarySize), received, "the whole binary must still be uploaded")
+	allocated := after.TotalAlloc - before.TotalAlloc
+	assert.Less(t, allocated, uint64(binarySize/2),
+		"uploading must stream: allocating %d bytes for a %d byte binary means it is buffered in memory", allocated, binarySize)
+}
+
 func TestErrAlreadyUpToDate_IsSentinel(t *testing.T) {
 	err := fmt.Errorf("wrapped: %w", ErrAlreadyUpToDate)
 	assert.True(t, errors.Is(err, ErrAlreadyUpToDate))
 	assert.Equal(t, "already up to date", ErrAlreadyUpToDate.Error())
+}
+
+// A request that is already canceled must still clean up after itself: the
+// temporary container is only reachable through this process, and the failure
+// paths that used the request context leaked it.
+func TestEngineClient_BuildImageWithBinary_CleansUpTempContainerAfterCancellation(t *testing.T) {
+	const tempContainerID = "cleanup-temp-container"
+	var deletes atomic.Int32
+	var cleanupContextErr error
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	mux := newFakeMux()
+	mux.handle(http.MethodPost, "/containers/create", func(w http.ResponseWriter, r *http.Request) {
+		jsonResponse(w, http.StatusCreated, map[string]any{"Id": tempContainerID})
+	})
+	mux.handle(http.MethodPut, "/containers/"+tempContainerID+"/archive", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.Copy(io.Discard, r.Body)
+		// The caller disappears while the upload is being rejected.
+		cancel()
+		http.Error(w, "archive rejected", http.StatusInternalServerError)
+	})
+	mux.handle(http.MethodDelete, "/containers/"+tempContainerID, func(w http.ResponseWriter, r *http.Request) {
+		deletes.Add(1)
+		cleanupContextErr = r.Context().Err()
+		w.WriteHeader(http.StatusNoContent)
+	})
+
+	binaryPath := filepath.Join(t.TempDir(), "new-api")
+	require.NoError(t, os.WriteFile(binaryPath, []byte("binary"), 0o755))
+	d := &dockerEngineImpl{client: fakeEngineClient(mux)}
+	require.Error(t, d.BuildImageWithBinary(ctx, "local/new-api:v1", binaryPath, "local/new-api:v2"))
+
+	assert.EqualValues(t, 1, deletes.Load(), "the temporary build container must be removed even after cancellation")
+	assert.NoError(t, cleanupContextErr, "cleanup must run on its own context, not the canceled request context")
+}
+
+// The upload declares an exact Content-Length so it is not sent chunked; that
+// length must match what the tar writer actually emits for every block
+// alignment, otherwise the request fails halfway through.
+func TestSingleFileTarSizeMatchesWrittenArchive(t *testing.T) {
+	for _, size := range []int64{0, 1, 511, 512, 513, 1025, 32 << 20} {
+		var archive bytes.Buffer
+		require.NoError(t, writeSingleFileTar(&archive, "new-api", bytes.NewReader(make([]byte, size)), size, 0o755))
+		assert.EqualValues(t, archive.Len(), singleFileTarSize(size), "declared size for a %d byte file", size)
+	}
 }
 
 // ----------------------------------------------------------------------------

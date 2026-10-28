@@ -624,6 +624,12 @@ func (d *dockerEngineImpl) deleteContainer(ctx context.Context, id string) error
 }
 
 // BuildImageWithBinary creates targetImage from baseImage by replacing /new-api.
+//
+// The binary is streamed into the tar upload instead of being read into memory
+// first: a release binary is around 131MiB and the application container is
+// commonly capped at 256MiB, where buffering the file and then building a
+// second in-memory copy of it exhausts the cgroup and the process is killed
+// mid-update.
 func (d *dockerEngineImpl) BuildImageWithBinary(ctx context.Context, baseImage, binaryPath, targetImage string) error {
 	if baseImage == "" {
 		return fmt.Errorf("base image is required")
@@ -631,11 +637,19 @@ func (d *dockerEngineImpl) BuildImageWithBinary(ctx context.Context, baseImage, 
 	if targetImage == "" {
 		return fmt.Errorf("target image is required")
 	}
-	binData, err := os.ReadFile(binaryPath)
+	binary, err := os.Open(binaryPath)
 	if err != nil {
 		return fmt.Errorf("read binary: %w", err)
 	}
-	if len(binData) == 0 {
+	defer binary.Close()
+	info, err := binary.Stat()
+	if err != nil {
+		return fmt.Errorf("stat binary: %w", err)
+	}
+	if !info.Mode().IsRegular() {
+		return fmt.Errorf("binary file is not a regular file")
+	}
+	if info.Size() == 0 {
 		return fmt.Errorf("binary file is empty")
 	}
 
@@ -651,13 +665,15 @@ func (d *dockerEngineImpl) BuildImageWithBinary(ctx context.Context, baseImage, 
 	if err != nil {
 		return fmt.Errorf("create temp container: %w", err)
 	}
-	defer func() { _ = d.deleteContainer(ctx, tmpID) }()
+	// Nobody else knows this container exists, so its removal must not depend
+	// on the caller's request still being alive.
+	defer func() {
+		cleanupCtx, cancelCleanup := detachedCleanupContext(ctx)
+		defer cancelCleanup()
+		_ = d.deleteContainer(cleanupCtx, tmpID)
+	}()
 
-	tarBytes, err := tarOneFile("new-api", binData, 0o755)
-	if err != nil {
-		return err
-	}
-	if err := d.putContainerArchive(ctx, tmpID, "/", tarBytes); err != nil {
+	if err := d.putFileArchive(ctx, tmpID, "/", "new-api", binary, info.Size(), 0o755); err != nil {
 		return fmt.Errorf("copy binary into temp container: %w", err)
 	}
 
@@ -666,6 +682,16 @@ func (d *dockerEngineImpl) BuildImageWithBinary(ctx context.Context, baseImage, 
 		return fmt.Errorf("commit image %s: %w", targetImage, err)
 	}
 	return nil
+}
+
+// cleanupTimeout bounds best-effort cleanup that must outlive the request that
+// started the work.
+const cleanupTimeout = 30 * time.Second
+
+// detachedCleanupContext keeps the caller's values but not its cancellation, so
+// cleanup still runs after the browser or reverse proxy disconnects.
+func detachedCleanupContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.WithoutCancel(ctx), cleanupTimeout)
 }
 
 // RecreateSelfLocal schedules an independent helper to recreate onto a local image.
@@ -706,35 +732,48 @@ func filterEnv(env []string, dropKey string) []string {
 	return out
 }
 
-func tarOneFile(name string, data []byte, mode int64) ([]byte, error) {
-	var buf bytes.Buffer
-	tw := tar.NewWriter(&buf)
+// writeSingleFileTar writes one file as a tar stream, reading the file chunk by
+// chunk rather than materializing the whole archive.
+func writeSingleFileTar(w io.Writer, name string, file io.Reader, size int64, mode int64) error {
+	tw := tar.NewWriter(w)
 	hdr := &tar.Header{
 		Name: name,
 		Mode: mode,
-		Size: int64(len(data)),
+		Size: size,
 	}
 	if err := tw.WriteHeader(hdr); err != nil {
-		return nil, err
+		return err
 	}
-	if _, err := tw.Write(data); err != nil {
-		return nil, err
+	if _, err := io.Copy(tw, file); err != nil {
+		return err
 	}
-	if err := tw.Close(); err != nil {
-		return nil, err
-	}
-	return buf.Bytes(), nil
+	return tw.Close()
 }
 
-func (d *dockerEngineImpl) putContainerArchive(ctx context.Context, id, path string, tarBytes []byte) error {
+// singleFileTarSize reports the exact archive length of writeSingleFileTar for
+// a short file name, which keeps the upload from falling back to chunked
+// transfer encoding.
+func singleFileTarSize(size int64) int64 {
+	const block = 512
+	return block + ((size+block-1)/block)*block + 2*block
+}
+
+// putFileArchive streams a single file into the container as a tar archive.
+func (d *dockerEngineImpl) putFileArchive(ctx context.Context, id, path, name string, file io.Reader, size, mode int64) error {
 	query := url.Values{"path": {path}}
+	reader, writer := io.Pipe()
+	go func() {
+		writer.CloseWithError(writeSingleFileTar(writer, name, file, size, mode))
+	}()
+	defer reader.Close()
 	req, err := d.client.request(ctx, http.MethodPut,
 		"/containers/"+url.PathEscape(id)+"/archive?"+query.Encode(),
-		bytes.NewReader(tarBytes),
+		reader,
 	)
 	if err != nil {
 		return err
 	}
+	req.ContentLength = singleFileTarSize(size)
 	req.Header.Set("Content-Type", "application/x-tar")
 	resp, err := d.client.call(req)
 	if err != nil {

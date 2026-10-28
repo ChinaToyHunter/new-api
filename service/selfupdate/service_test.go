@@ -683,6 +683,89 @@ func TestService_DockerRecreateOptions_ComposeSync(t *testing.T) {
 }
 
 // ----------------------------------------------------------------------------
+// Update lifetime: a browser or proxy disconnect must not abort the update
+// ----------------------------------------------------------------------------
+
+// gatedDownloadGitHubClient holds Download until the test releases it and
+// reports a canceled context, so the caller can disappear mid-update.
+type gatedDownloadGitHubClient struct {
+	release  *ReleaseInfo
+	started  chan struct{}
+	proceed  chan struct{}
+	binary   []byte
+	checksum []byte
+}
+
+func (g *gatedDownloadGitHubClient) FetchLatestRelease(context.Context, string) (*ReleaseInfo, error) {
+	return g.release, nil
+}
+
+func (g *gatedDownloadGitHubClient) ListReleases(context.Context, string, int) ([]ReleaseSummary, error) {
+	return nil, nil
+}
+
+func (g *gatedDownloadGitHubClient) FetchReleaseByTag(context.Context, string, string) (*ReleaseInfo, error) {
+	return g.release, nil
+}
+
+func (g *gatedDownloadGitHubClient) Download(ctx context.Context, _, destination string, _ int64) error {
+	close(g.started)
+	<-g.proceed
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return os.WriteFile(destination, g.binary, 0o600)
+}
+
+func (g *gatedDownloadGitHubClient) FetchBytes(context.Context, string, int64) ([]byte, error) {
+	return g.checksum, nil
+}
+
+func TestService_Perform_ContinuesAfterCallerCancellation(t *testing.T) {
+	resetGlobalCache(t)
+
+	t.Setenv("NEWAPI_DEPLOY_MODE", "docker")
+	binaryName := dockerTestBinaryName()
+	binary := []byte("verified release binary")
+	digest := sha256.Sum256(binary)
+	gh := &gatedDownloadGitHubClient{
+		release: makeRelease("v2.0.0", []Asset{
+			{Name: binaryName, DownloadURL: "https://example.invalid/binary"},
+			{Name: "checksums-linux.txt", DownloadURL: "https://example.invalid/checksums"},
+		}),
+		started:  make(chan struct{}),
+		proceed:  make(chan struct{}),
+		binary:   binary,
+		checksum: fmt.Appendf(nil, "%x  %s\n", digest, binaryName),
+	}
+	docker := &fakeDockerEngine{inspectSelf: &ContainerInspect{Image: "sha256:base"}}
+	docker.inspectSelf.Config.Image = "calciumion/new-api:latest"
+	svc := newService(testConfig(), gh, docker, "v1.0.0")
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() {
+		_, err := svc.Perform(ctx)
+		done <- err
+	}()
+
+	<-gh.started
+	cancel() // the browser or reverse proxy went away while the update ran
+	close(gh.proceed)
+
+	select {
+	case err := <-done:
+		require.NoError(t, err, "canceling the request must not abort an update already in progress")
+	case <-time.After(10 * time.Second):
+		t.Fatal("update did not finish after the caller was canceled")
+	}
+	assert.True(t, docker.buildCalled, "the verified release must still be applied")
+	assert.True(t, docker.recreateLocalCalled, "the replacement must still be scheduled")
+	assert.Equal(t, PhaseDone, svc.Status().Phase)
+}
+
+// ----------------------------------------------------------------------------
 // TestService_Status
 // ----------------------------------------------------------------------------
 

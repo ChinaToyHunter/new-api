@@ -43,6 +43,10 @@ const (
 	PhaseFailed   = "failed"
 )
 
+// applyUpdateBudget bounds the detached update work so a stuck Docker call
+// still ends with a recorded failure instead of running forever.
+const applyUpdateBudget = 15 * time.Minute
+
 // Service is the self-update facade.
 type Service struct {
 	cfg            Config
@@ -342,10 +346,18 @@ func (s *Service) perform(ctx context.Context, targetVersion string) (*PerformRe
 
 	mode := info.DeployMode
 
+	// Applying an update is a server-side job. The browser tab, or the reverse
+	// proxy in front of it, frequently disappears while a release binary is
+	// still being transferred and the container replaced; canceling the work at
+	// that point leaves the app stopped or a temporary container behind. Detach
+	// from the request cancellation and keep a hard deadline instead.
+	applyCtx, cancelApply := context.WithTimeout(context.WithoutCancel(ctx), applyUpdateBudget)
+	defer cancelApply()
+
 	switch mode {
 	case DeployModeBinary:
 		s.setStatus(PhaseApplying, "applying binary update", true, "")
-		if err := ApplyBinaryUpdate(ctx, s.gh, info.Release, runtime.GOOS, runtime.GOARCH); err != nil {
+		if err := ApplyBinaryUpdate(applyCtx, s.gh, info.Release, runtime.GOOS, runtime.GOARCH); err != nil {
 			if errors.Is(err, ErrAlreadyUpToDate) {
 				s.setStatus(PhaseIdle, "already up to date", false, "")
 				return &PerformResult{
@@ -402,7 +414,7 @@ func (s *Service) perform(ctx context.Context, targetVersion string) (*PerformRe
 		// checksum-verified local-image update path.
 		if info.Release != nil && hasDockerReleaseBinary(info.Release) {
 			s.setStatus(PhasePulling, "downloading release binary for docker update", true, "")
-			if err := s.applyDockerFromGitHub(ctx, eng, info, s.dockerRecreateOptions(true)); err != nil {
+			if err := s.applyDockerFromGitHub(applyCtx, eng, info, s.dockerRecreateOptions(true)); err != nil {
 				s.setStatus(PhaseFailed, "docker github update failed", false, err.Error())
 				return nil, err
 			}
@@ -425,7 +437,7 @@ func (s *Service) perform(ctx context.Context, targetVersion string) (*PerformRe
 		// RecreateSelf owns the pull so it can compare the image digest before
 		// and after exactly one pull.
 		s.setStatus(PhasePulling, "pulling image and preparing container recreation", true, "")
-		if err := eng.RecreateSelfWithOptions(ctx, image, DockerRecreateOptions{}); err != nil {
+		if err := eng.RecreateSelfWithOptions(applyCtx, image, DockerRecreateOptions{}); err != nil {
 			if errors.Is(err, ErrAlreadyUpToDate) {
 				s.setStatus(PhaseIdle, "already up to date", false, "")
 				return &PerformResult{
