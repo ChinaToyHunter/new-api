@@ -1,17 +1,286 @@
 package controller
 
 import (
+	"errors"
+	"fmt"
+	"io"
 	"math"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/service"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestVercelBalance(t *testing.T) {
+	for _, tc := range []struct {
+		name, body string
+		want       float64
+		wantErr    bool
+	}{
+		{name: "remaining USD not lifetime spend", body: `{"balance":"95.50","total_used":"4.50"}`, want: 95.5},
+		{name: "explicit zero", body: `{"balance":"0","total_used":"100"}`},
+		{name: "negative credit balance", body: `{"balance":"-0.25"}`, want: -0.25},
+		{name: "missing balance", body: `{"total_used":"10"}`, wantErr: true},
+		{name: "null balance", body: `{"balance":null}`, wantErr: true},
+		{name: "invalid amount", body: `{"balance":"private-upstream-value"}`, wantErr: true},
+		{name: "not finite", body: `{"balance":"NaN"}`, wantErr: true},
+		{name: "overflow", body: `{"balance":"1e999"}`, wantErr: true},
+		{name: "upstream JSON error", body: `{"error":{"message":"private-upstream-value"}}`, wantErr: true},
+		{name: "invalid JSON", body: `<html>private-upstream-value</html>`, wantErr: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			setupSub2APIBalanceTest(t)
+			calls := 0
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				calls++
+				assert.Equal(t, http.MethodGet, r.Method)
+				assert.Equal(t, "/v1/credits", r.URL.Path)
+				assert.Empty(t, r.URL.RawQuery)
+				assert.Equal(t, "Bearer test-gateway-key", r.Header.Get("Authorization"))
+				_, _ = io.WriteString(w, tc.body)
+			}))
+			t.Cleanup(server.Close)
+			baseURL := server.URL + "/v1/"
+			channel := &model.Channel{Type: constant.ChannelTypeVercel, BaseURL: &baseURL, Key: "test-gateway-key", Balance: 42, BalanceUpdatedTime: 123}
+			require.NoError(t, model.DB.Create(channel).Error)
+
+			result, err := updateChannelBalance(channel)
+			if tc.wantErr {
+				require.Error(t, err)
+				assert.NotContains(t, err.Error(), "private-upstream-value")
+				assert.Equal(t, 42.0, channel.Balance)
+				assert.Equal(t, int64(123), channel.BalanceUpdatedTime)
+			} else {
+				require.NoError(t, err)
+				assert.InDelta(t, tc.want, result.Balance, 1e-9)
+				assert.Empty(t, result.RawResponse)
+			}
+			assert.Equal(t, 1, calls)
+			var stored model.Channel
+			require.NoError(t, model.DB.First(&stored, channel.Id).Error)
+			if tc.wantErr {
+				assert.Equal(t, 42.0, stored.Balance)
+				assert.Equal(t, int64(123), stored.BalanceUpdatedTime)
+			} else {
+				assert.InDelta(t, tc.want, stored.Balance, 1e-9)
+				assert.Greater(t, stored.BalanceUpdatedTime, int64(123))
+			}
+		})
+	}
+}
+
+func TestVercelBalanceTeamSelectionAndTransportFailures(t *testing.T) {
+	for _, team := range []string{"team_example", "example-team"} {
+		t.Run(team, func(t *testing.T) {
+			setupSub2APIBalanceTest(t)
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				query := r.URL.Query()
+				if strings.HasPrefix(team, "team_") {
+					assert.Equal(t, team, query.Get("teamId"))
+					assert.False(t, query.Has("slug"))
+				} else {
+					assert.Equal(t, team, query.Get("slug"))
+					assert.False(t, query.Has("teamId"))
+				}
+				assert.Equal(t, "application/json", r.Header.Get("Accept"))
+				_, _ = io.WriteString(w, `{"balance":"2.5"}`)
+			}))
+			t.Cleanup(server.Close)
+			baseURL := server.URL + "/v4/ai"
+			headerOverride := fmt.Sprintf(`{"x-vercel-ai-gateway-team":%q}`, team)
+			channel := &model.Channel{Type: constant.ChannelTypeVercel, BaseURL: &baseURL, Key: "test-gateway-key", HeaderOverride: &headerOverride}
+			require.NoError(t, model.DB.Create(channel).Error)
+			result, err := updateChannelBalance(channel)
+			require.NoError(t, err)
+			assert.Equal(t, 2.5, result.Balance)
+		})
+	}
+	for _, tc := range []struct {
+		name   string
+		status int
+		body   string
+	}{
+		{name: "unauthorized", status: http.StatusUnauthorized, body: "private-upstream-value"},
+		{name: "missing scope", status: http.StatusForbidden, body: "private-upstream-value"},
+		{name: "gateway error", status: http.StatusBadGateway, body: "private-upstream-value"},
+		{name: "redirect", status: http.StatusTemporaryRedirect},
+		{name: "oversized", status: http.StatusOK, body: strings.Repeat(" ", maxAdvancedCustomBalanceResponseBytes+1)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			setupSub2APIBalanceTest(t)
+			redirectCalls := 0
+			sink := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				redirectCalls++
+				_, _ = io.WriteString(w, `{"balance":"0"}`)
+			}))
+			t.Cleanup(sink.Close)
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Location", sink.URL)
+				w.WriteHeader(tc.status)
+				_, _ = io.WriteString(w, tc.body)
+			}))
+			t.Cleanup(server.Close)
+			baseURL := server.URL
+			channel := &model.Channel{Type: constant.ChannelTypeVercel, BaseURL: &baseURL, Key: "test-gateway-key", Balance: 42, BalanceUpdatedTime: 123}
+			require.NoError(t, model.DB.Create(channel).Error)
+			_, err := updateChannelBalance(channel)
+			require.Error(t, err)
+			assert.NotContains(t, err.Error(), "private-upstream-value")
+			assert.NotContains(t, err.Error(), channel.Key)
+			assert.Zero(t, redirectCalls, "billing redirects must not disclose credentials")
+			var stored model.Channel
+			require.NoError(t, model.DB.First(&stored, channel.Id).Error)
+			assert.Equal(t, 42.0, stored.Balance)
+			assert.Equal(t, int64(123), stored.BalanceUpdatedTime)
+		})
+	}
+}
+
+func TestVercelBalanceDefaultURLAndNetworkError(t *testing.T) {
+	setupSub2APIBalanceTest(t)
+	client := service.GetHttpClient()
+	if client == nil {
+		client = http.DefaultClient
+	}
+	original := client.Transport
+	t.Cleanup(func() { client.Transport = original })
+	client.Transport = emailHTTPTransport(func(req *http.Request) (*http.Response, error) {
+		assert.Equal(t, "https://ai-gateway.vercel.sh/v1/credits", req.URL.String())
+		assert.Equal(t, "Bearer test-gateway-key", req.Header.Get("Authorization"))
+		_, deadline := req.Context().Deadline()
+		assert.True(t, deadline, "balance requests must have a deadline")
+		return nil, errors.New("private-network-detail test-gateway-key")
+	})
+	channel := &model.Channel{Type: constant.ChannelTypeVercel, Key: "test-gateway-key", Balance: 42}
+	require.NoError(t, model.DB.Create(channel).Error)
+	_, err := updateChannelBalance(channel)
+	require.EqualError(t, err, "Provider balance request failed")
+	assert.Equal(t, 42.0, channel.Balance)
+}
+
+func TestDeepInfraBalanceRoutesExistingCompatibleChannels(t *testing.T) {
+	setupSub2APIBalanceTest(t)
+	client := service.GetHttpClient()
+	if client == nil {
+		client = http.DefaultClient
+	}
+	original := client.Transport
+	t.Cleanup(func() { client.Transport = original })
+	calls := 0
+	client.Transport = emailHTTPTransport(func(req *http.Request) (*http.Response, error) {
+		calls++
+		assert.Equal(t, "https://api.deepinfra.com/v1/me?checklist=true", req.URL.String())
+		assert.Equal(t, http.MethodGet, req.Method)
+		assert.Equal(t, "Bearer test-deepinfra-key", req.Header.Get("Authorization"))
+		return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{"checklist":{"stripe_balance":-20,"recent":2}}`))}, nil
+	})
+	for _, channelType := range []int{constant.ChannelTypeOpenAI, constant.ChannelTypeCustom} {
+		for _, base := range []string{"https://api.deepinfra.com", "https://api.deepinfra.com/v1/openai/", "https://API.DEEPINFRA.COM:443/v1/openai/chat/completions"} {
+			t.Run(fmt.Sprintf("%d/%s", channelType, base), func(t *testing.T) {
+				channel := &model.Channel{Type: channelType, BaseURL: &base, Key: "test-deepinfra-key", Balance: 42}
+				require.NoError(t, model.DB.Create(channel).Error)
+				result, err := updateChannelBalance(channel)
+				require.NoError(t, err)
+				assert.Equal(t, 18.0, result.Balance)
+				var stored model.Channel
+				require.NoError(t, model.DB.First(&stored, channel.Id).Error)
+				assert.Equal(t, 18.0, stored.Balance)
+			})
+		}
+	}
+	assert.Equal(t, 6, calls)
+}
+
+func TestDeepInfraBalanceResponseValidation(t *testing.T) {
+	for _, tc := range []struct {
+		name, body string
+		want       float64
+		wantErr    bool
+	}{
+		{name: "unbilled usage deducted in USD", body: `{"checklist":{"stripe_balance":-20,"recent":2.25}}`, want: 17.75},
+		{name: "empty wallet", body: `{"checklist":{"stripe_balance":0,"recent":0}}`},
+		{name: "money owed", body: `{"checklist":{"stripe_balance":3,"recent":1}}`, want: -4},
+		{name: "missing checklist", body: `{}`, wantErr: true},
+		{name: "missing unbilled usage", body: `{"checklist":{"stripe_balance":-20}}`, wantErr: true},
+		{name: "null wallet", body: `{"checklist":{"stripe_balance":null,"recent":0}}`, wantErr: true},
+		{name: "invalid number", body: `{"checklist":{"stripe_balance":"private-upstream-value","recent":0}}`, wantErr: true},
+		{name: "sum overflow", body: `{"checklist":{"stripe_balance":1.7e308,"recent":1.7e308}}`, wantErr: true},
+		{name: "JSON error", body: `{"detail":{"error":"private-upstream-value"}}`, wantErr: true},
+		{name: "active scoped credits must not be treated as empty wallet", body: `{"checklist":{"stripe_balance":0,"recent":0,"scoped_credits":[{"remaining_cents":1000,"expired":false,"covers_everything":true}]}}`, wantErr: true},
+		{name: "model-specific scoped credits are not universal cash", body: `{"checklist":{"stripe_balance":0,"recent":0,"scoped_credits":[{"remaining_cents":1000,"expired":false,"covers_everything":false}]}}`, wantErr: true},
+		{name: "expired scoped credits do not inflate balance", body: `{"checklist":{"stripe_balance":-5,"recent":1,"scoped_credits":[{"remaining_cents":1000,"expired":true}]}}`, want: 4},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			setupSub2APIBalanceTest(t)
+			client := service.GetHttpClient()
+			if client == nil {
+				client = http.DefaultClient
+			}
+			original := client.Transport
+			t.Cleanup(func() { client.Transport = original })
+			client.Transport = emailHTTPTransport(func(req *http.Request) (*http.Response, error) {
+				return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(tc.body))}, nil
+			})
+			baseURL := "https://api.deepinfra.com/v1/openai"
+			channel := &model.Channel{Type: constant.ChannelTypeOpenAI, BaseURL: &baseURL, Key: "test-deepinfra-key", Balance: 42, BalanceUpdatedTime: 123}
+			require.NoError(t, model.DB.Create(channel).Error)
+			result, err := updateChannelBalance(channel)
+			if tc.wantErr {
+				require.Error(t, err)
+				assert.NotContains(t, err.Error(), "private-upstream-value")
+			} else {
+				require.NoError(t, err)
+				assert.InDelta(t, tc.want, result.Balance, 1e-9)
+			}
+			var stored model.Channel
+			require.NoError(t, model.DB.First(&stored, channel.Id).Error)
+			if tc.wantErr {
+				assert.Equal(t, 42.0, stored.Balance)
+				assert.Equal(t, int64(123), stored.BalanceUpdatedTime)
+			} else {
+				assert.InDelta(t, tc.want, stored.Balance, 1e-9)
+			}
+		})
+	}
+}
+
+func TestDeepInfraBalanceDoesNotHijackOtherUpstreams(t *testing.T) {
+	for _, baseURL := range []string{
+		"https://api.openai.com", "https://relay.example/api.deepinfra.com",
+		"https://api.deepinfra.com.relay.example", "http://api.deepinfra.com",
+		"https://api.deepinfra.com:8443", "https://user@api.deepinfra.com",
+		"https://api.deepinfra.com?key=private-query", "https://api.deepinfra.com#fragment",
+	} {
+		t.Run(baseURL, func(t *testing.T) {
+			setupSub2APIBalanceTest(t)
+			client := service.GetHttpClient()
+			if client == nil {
+				client = http.DefaultClient
+			}
+			original := client.Transport
+			t.Cleanup(func() { client.Transport = original })
+			client.Transport = emailHTTPTransport(func(req *http.Request) (*http.Response, error) {
+				assert.NotEqual(t, "/v1/me", req.URL.Path, "only the exact official HTTPS origin uses DeepInfra billing")
+				body := `{"has_payment_method":true,"hard_limit_usd":20}`
+				if strings.HasSuffix(req.URL.Path, "/usage") {
+					body = `{"total_usage":200}`
+				}
+				return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body))}, nil
+			})
+			channel := &model.Channel{Type: constant.ChannelTypeOpenAI, BaseURL: &baseURL, Key: "test-relay-key"}
+			require.NoError(t, model.DB.Create(channel).Error)
+			_, err := updateChannelBalance(channel)
+			require.NoError(t, err)
+		})
+	}
+}
 
 func TestGetDeepSeekBalanceUSD(t *testing.T) {
 	tests := []struct {

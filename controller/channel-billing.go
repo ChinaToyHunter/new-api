@@ -396,6 +396,121 @@ func updateChannelOpenRouterBalance(channel *model.Channel) (float64, error) {
 	return balance, nil
 }
 
+// updateChannelVercelBalance reads remaining credits in USD, not lifetime spend.
+func updateChannelVercelBalance(channel *model.Channel) (float64, error) {
+	target, err := url.Parse(strings.TrimSpace(channel.GetBaseURL()))
+	if err != nil || target.Host == "" || (target.Scheme != "https" && target.Scheme != "http") || target.User != nil || target.RawQuery != "" || target.Fragment != "" {
+		return 0, common.NewMessage("Invalid provider balance configuration")
+	}
+	// Like the official Gateway SDK, credits are relative to the origin rather
+	// than the inference path (which may be /v1 or /v4/ai).
+	target.Path, target.RawPath = "/v1/credits", ""
+	headers, err := buildFetchModelsHeaders(channel, strings.TrimSpace(channel.Key))
+	if err != nil {
+		return 0, common.NewMessage("Invalid provider balance configuration")
+	}
+	if team := headers.Get("x-vercel-ai-gateway-team"); team != "" {
+		query := target.Query()
+		if strings.HasPrefix(team, "team_") {
+			query.Set("teamId", team)
+		} else {
+			query.Set("slug", team)
+		}
+		target.RawQuery = query.Encode()
+	}
+	body, err := getProviderBalanceResponse(channel, target.String(), headers)
+	if err != nil {
+		return 0, err
+	}
+	var response struct {
+		Balance *string `json:"balance"`
+	}
+	if err := common.Unmarshal(body, &response); err != nil || response.Balance == nil {
+		return 0, common.NewMessage("Invalid {{provider}} balance response", map[string]any{"provider": "Vercel"})
+	}
+	balance, err := strconv.ParseFloat(*response.Balance, 64)
+	if err != nil || math.IsNaN(balance) || math.IsInf(balance, 0) {
+		return 0, common.NewMessage("Invalid {{provider}} balance response", map[string]any{"provider": "Vercel"})
+	}
+	channel.UpdateBalance(balance)
+	return balance, nil
+}
+
+// updateChannelDeepInfraBalance follows the dashboard's USD wallet formula:
+// -(stripe_balance + recent). Recent usage has not yet been invoiced. The
+// account endpoint needs account:read, included in default inference keys;
+// /payment/checklist instead needs the separately granted billing:read scope.
+func updateChannelDeepInfraBalance(channel *model.Channel) (float64, error) {
+	headers, err := buildFetchModelsHeaders(channel, strings.TrimSpace(channel.Key))
+	if err != nil {
+		return 0, common.NewMessage("Invalid provider balance configuration")
+	}
+	body, err := getProviderBalanceResponse(channel, "https://api.deepinfra.com/v1/me?checklist=true", headers)
+	if err != nil {
+		return 0, err
+	}
+	var response struct {
+		Checklist *struct {
+			StripeBalance *float64 `json:"stripe_balance"`
+			Recent        *float64 `json:"recent"`
+			ScopedCredits []struct {
+				RemainingCents float64 `json:"remaining_cents"`
+				Expired        bool    `json:"expired"`
+			} `json:"scoped_credits"`
+		} `json:"checklist"`
+	}
+	if err := common.Unmarshal(body, &response); err != nil || response.Checklist == nil || response.Checklist.StripeBalance == nil || response.Checklist.Recent == nil {
+		return 0, common.NewMessage("Invalid {{provider}} balance response", map[string]any{"provider": "DeepInfra"})
+	}
+	checklist := response.Checklist
+	// Scoped discounts are not part of the prepaid wallet, and can keep some
+	// models usable even with an empty wallet. Do not collapse them into a
+	// scalar balance that the batch updater could treat as exhausted.
+	for _, credit := range checklist.ScopedCredits {
+		if !credit.Expired && credit.RemainingCents > 0 {
+			return 0, common.NewMessage("DeepInfra has active scoped credits that cannot be represented as a single channel balance")
+		}
+	}
+	balance := -(*checklist.StripeBalance + *checklist.Recent)
+	if math.IsNaN(balance) || math.IsInf(balance, 0) {
+		return 0, common.NewMessage("Invalid {{provider}} balance response", map[string]any{"provider": "DeepInfra"})
+	}
+	channel.UpdateBalance(balance)
+	return balance, nil
+}
+
+// getProviderBalanceResponse keeps read-only credentialed queries bounded and
+// never follows a redirect or exposes upstream bodies, keys or proxy details.
+func getProviderBalanceResponse(channel *model.Channel, target string, headers http.Header) ([]byte, error) {
+	settings := channel.GetSetting()
+	client, err := service.GetHttpClientWithProxySettings(settings.Proxy, settings)
+	if err != nil {
+		return nil, common.NewMessage("Invalid provider balance configuration")
+	}
+	balanceClient := *client
+	balanceClient.Timeout = 15 * time.Second
+	balanceClient.CheckRedirect = func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }
+	req, err := http.NewRequest(http.MethodGet, target, nil)
+	if err != nil {
+		return nil, common.NewMessage("Invalid provider balance configuration")
+	}
+	req.Header = headers.Clone()
+	req.Header.Set("Accept", "application/json")
+	resp, err := balanceClient.Do(req)
+	if err != nil {
+		return nil, common.NewMessage("Provider balance request failed")
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, common.NewMessage("Provider balance query returned HTTP {{status}}", map[string]any{"status": resp.StatusCode})
+	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxAdvancedCustomBalanceResponseBytes+1))
+	if err != nil || len(body) > maxAdvancedCustomBalanceResponseBytes {
+		return nil, common.NewMessage("Provider balance response is invalid or too large")
+	}
+	return body, nil
+}
+
 func updateChannelMoonshotBalance(channel *model.Channel) (float64, error) {
 	url := "https://api.moonshot.cn/v1/users/me/balance"
 	body, err := GetResponseBody("GET", url, channel, GetAuthHeader(channel.Key))
@@ -741,6 +856,12 @@ func updateStandardChannelBalance(channel *model.Channel) (float64, error) {
 	if channel.GetBaseURL() == "" {
 		channel.BaseURL = &baseURL
 	}
+	if channel.Type == constant.ChannelTypeOpenAI || channel.Type == constant.ChannelTypeCustom {
+		target, err := url.Parse(strings.TrimSpace(channel.GetBaseURL()))
+		if err == nil && target.Scheme == "https" && strings.EqualFold(target.Hostname(), "api.deepinfra.com") && (target.Port() == "" || target.Port() == "443") && target.User == nil && target.RawQuery == "" && target.Fragment == "" {
+			return updateChannelDeepInfraBalance(channel)
+		}
+	}
 	switch channel.Type {
 	case constant.ChannelTypeOpenAI:
 		if channel.GetBaseURL() != "" {
@@ -772,6 +893,8 @@ func updateStandardChannelBalance(channel *model.Channel) (float64, error) {
 		return updateChannelNewAPIBalance(channel)
 	case constant.ChannelTypeCommandCode:
 		return updateChannelCommandCodeBalance(channel)
+	case constant.ChannelTypeVercel:
+		return updateChannelVercelBalance(channel)
 	default:
 		return 0, common.NewMessage("Not implemented yet")
 	}
