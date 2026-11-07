@@ -149,6 +149,52 @@ func TestAdaptorRoutesModelsToUpstreamProtocols(t *testing.T) {
 	}
 }
 
+func TestAdaptorOpenCodeGoUnifiedTextRouting(t *testing.T) {
+	tests := []struct {
+		name        string
+		baseURL     string
+		inbound     inboundRequest
+		model       string
+		rules       []dto.ModelProtocolRule
+		wantURL     string
+		wantRequest any
+	}{
+		{"legacy go gemini responses", "https://opencode.ai/zen/go", responsesInbound, "gemini-4-argon", nil, "https://opencode.ai/inference/go/openai/v1/responses", dto.OpenAIResponsesRequest{}},
+		{"legacy go gemini chat", "https://opencode.ai/zen/go/v1/", chatInbound, "gemini-4-argon", nil, "https://opencode.ai/inference/go/openai/v1/chat/completions", &dto.GeneralOpenAIRequest{}},
+		{"legacy go gemini messages", "https://opencode.ai/zen/go", messagesInbound, "gemini-4-argon", nil, "https://opencode.ai/inference/go/anthropic/v1/messages", &dto.ClaudeRequest{}},
+		{"default go gemini", "", responsesInbound, "gemini-4-argon", nil, "https://opencode.ai/inference/go/openai/v1/responses", dto.OpenAIResponsesRequest{}},
+		{"unified go keeps responses for chat model", "https://opencode.ai/inference/go/", responsesInbound, "deepseek-v4.1-flash", nil, "https://opencode.ai/inference/go/openai/v1/responses", dto.OpenAIResponsesRequest{}},
+		{"unified go keeps chat for responses model", "https://opencode.ai/inference/go", chatInbound, "gpt-5.6-luna", nil, "https://opencode.ai/inference/go/openai/v1/chat/completions", &dto.GeneralOpenAIRequest{}},
+		{"unified relay keeps its origin", "https://relay.example/inference/go", responsesInbound, "gemini-4-argon", nil, "https://relay.example/inference/go/openai/v1/responses", dto.OpenAIResponsesRequest{}},
+		{"custom go endpoint is not redirected", "https://relay.example/provider", responsesInbound, "gemini-4-argon", nil, "https://relay.example/provider/v1/responses", dto.OpenAIResponsesRequest{}},
+		{"lookalike host is not migrated", "https://notopencode.ai/zen/go", chatInbound, "gemini-4-argon", nil, "https://notopencode.ai/zen/go/v1/chat/completions", &dto.GeneralOpenAIRequest{}},
+		{"channel protocol rule still wins", "https://opencode.ai/inference/go", responsesInbound, "gemini-4-argon", []dto.ModelProtocolRule{{Pattern: "gemini-*", Protocol: dto.ModelProtocolAnthropic}}, "https://opencode.ai/inference/go/anthropic/v1/messages", &dto.ClaudeRequest{}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c, _, info := newTestRelay(t, constant.ChannelTypeOpenCodeGo, tt.baseURL, tt.inbound, tt.model)
+			info.ChannelOtherSettings.ModelProtocolRules = tt.rules
+			adaptor := NewAdaptor(constant.ChannelTypeOpenCodeGo)
+			adaptor.Init(info)
+			converted, err := tt.inbound.convert(adaptor, c, info, tt.model)
+			require.NoError(t, err)
+			assert.IsType(t, tt.wantRequest, converted)
+			requestURL, err := adaptor.GetRequestURL(info)
+			require.NoError(t, err)
+			assert.Equal(t, tt.wantURL, requestURL)
+			header := http.Header{}
+			require.NoError(t, adaptor.SetupRequestHeader(c, &header, info))
+			assert.Equal(t, "Bearer sk-test", header.Get("Authorization"))
+			assert.Empty(t, header.Get("x-api-key"))
+			if strings.HasSuffix(tt.wantURL, "/messages") {
+				assert.Equal(t, "2023-06-01", header.Get("anthropic-version"))
+			}
+			assert.NotEmpty(t, header.Get(openCodeSessionHeader))
+		})
+	}
+	assert.Contains(t, NewAdaptor(constant.ChannelTypeOpenCodeGo).GetModelList(), "gemini-4-argon")
+}
+
 func TestAdaptorCommandCodeRoutesByUpstreamModelCatalog(t *testing.T) {
 	var catalogRequests atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -403,6 +449,9 @@ func TestAdaptorDoResponseConvertsToClientProtocol(t *testing.T) {
 		{"chat reply to messages", messagesInbound, "glm-5.3", chatBody, "content.0.text", "hello"},
 		{"messages reply to chat", chatInbound, "minimax-m3", claudeBody, "choices.0.message.content", "hello"},
 		{"messages reply to responses", responsesInbound, "minimax-m3", claudeBody, "output.0.content.0.text", "hello"},
+		{"gemini chat reply stays chat", chatInbound, "gemini-4-argon", chatBody, "choices.0.message.content", "hello"},
+		{"gemini responses reply stays responses", responsesInbound, "gemini-4-argon", responsesBody, "output.0.content.0.text", "hello"},
+		{"gemini messages reply stays messages", messagesInbound, "gemini-4-argon", claudeBody, "content.0.text", "hello"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -452,6 +501,81 @@ func TestAdaptorSendsConvertedRequestUpstream(t *testing.T) {
 	assert.Equal(t, openCodeUserAgent, gotUserAgent)
 	assert.Equal(t, "gpt-5.6-luna", gjson.GetBytes(gotBody, "model").String())
 	assert.True(t, gjson.GetBytes(gotBody, "input").Exists(), string(gotBody))
+}
+
+func TestAdaptorOpenCodeGoGeminiResponsesRoundTrip(t *testing.T) {
+	oldTimeout := constant.StreamingTimeout
+	constant.StreamingTimeout = 30
+	t.Cleanup(func() { constant.StreamingTimeout = oldTimeout })
+	response := `{"id":"resp_gemini","model":"gemini-4-argon","status":"completed","output":[{"id":"call_1","type":"function_call","call_id":"call_1","name":"read_file","arguments":"{\"path\":\"main.go\"}","status":"completed"}],"usage":{"input_tokens":7,"output_tokens":5,"total_tokens":12}}`
+	for _, stream := range []bool{false, true} {
+		t.Run(map[bool]string{false: "json", true: "sse"}[stream], func(t *testing.T) {
+			var received []byte
+			var receivedHeaders http.Header
+			var receivedPath string
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				receivedPath = r.URL.Path
+				receivedHeaders = r.Header.Clone()
+				var err error
+				received, err = io.ReadAll(r.Body)
+				assert.NoError(t, err)
+				if stream {
+					w.Header().Set("Content-Type", "text/event-stream")
+					_, _ = io.WriteString(w, "data: {\"type\":\"response.function_call_arguments.delta\",\"item_id\":\"call_1\",\"output_index\":0,\"delta\":\"{}\"}\n\n"+
+						"data: {\"type\":\"response.completed\",\"response\":"+response+"}\n\n")
+				} else {
+					w.Header().Set("Content-Type", "application/json")
+					_, _ = io.WriteString(w, response)
+				}
+			}))
+			t.Cleanup(server.Close)
+			c, recorder, info := newTestRelay(t, constant.ChannelTypeOpenCodeGo, server.URL+"/inference/go", responsesInbound, "gemini-4-argon")
+			info.IsStream = stream
+			info.RequestConversionChain = []types.RelayFormat{types.RelayFormatOpenAIResponses}
+			info.HeadersOverride = map[string]any{"User-Agent": "{client_header:User-Agent}"}
+			c.Request.Header.Set("User-Agent", "fixture-dsh/1.0")
+			maxOutput := uint(128)
+			request := dto.OpenAIResponsesRequest{
+				Model: "gemini-4-argon", Input: []byte(`"inspect main.go"`), PromptCacheKey: []byte(`"dsh-session-1"`),
+				MaxOutputTokens: &maxOutput, Stream: &stream,
+				Tools: []byte(`[{"type":"function","name":"read_file","parameters":{"type":"object","properties":{"path":{"type":"string"}}}}]`),
+			}
+			info.Request = &request
+			adaptor := NewAdaptor(constant.ChannelTypeOpenCodeGo)
+			adaptor.Init(info)
+			converted, err := adaptor.ConvertOpenAIResponsesRequest(c, info, request)
+			require.NoError(t, err)
+			body, err := common.Marshal(converted)
+			require.NoError(t, err)
+			rawResponse, err := adaptor.DoRequest(c, info, strings.NewReader(string(body)))
+			require.NoError(t, err)
+			usage, apiErr := adaptor.DoResponse(c, rawResponse.(*http.Response), info)
+			require.Nil(t, apiErr)
+			require.IsType(t, &dto.Usage{}, usage)
+			assert.Equal(t, 7, usage.(*dto.Usage).PromptTokens)
+			assert.Equal(t, 5, usage.(*dto.Usage).CompletionTokens)
+			assert.Equal(t, 12, usage.(*dto.Usage).TotalTokens)
+			assert.Equal(t, "/inference/go/openai/v1/responses", receivedPath)
+			assert.Equal(t, "Bearer sk-test", receivedHeaders.Get("Authorization"))
+			assert.Equal(t, "dsh-session-1", receivedHeaders.Get(openCodeSessionHeader))
+			assert.Equal(t, "fixture-dsh/1.0", receivedHeaders.Get("User-Agent"))
+			assert.Equal(t, "gemini-4-argon", gjson.GetBytes(received, "model").String())
+			assert.Equal(t, "dsh-session-1", gjson.GetBytes(received, "prompt_cache_key").String())
+			assert.Equal(t, int64(128), gjson.GetBytes(received, "max_output_tokens").Int())
+			assert.Equal(t, "read_file", gjson.GetBytes(received, "tools.0.name").String())
+			if stream {
+				assert.Contains(t, recorder.Body.String(), "event: response.function_call_arguments.delta")
+				assert.Contains(t, recorder.Body.String(), "event: response.completed")
+				require.NotNil(t, info.StreamStatus)
+				assert.Equal(t, string(relaycommon.ResponseOutcomeCompleted), info.StreamStatus.ResponseOutcome())
+				assert.True(t, info.StreamStatus.IsNormalEnd())
+				assert.False(t, info.StreamStatus.HasErrors())
+			} else {
+				assert.Equal(t, "read_file", gjson.Get(recorder.Body.String(), "output.0.name").String())
+				assert.Equal(t, "completed", gjson.Get(recorder.Body.String(), "status").String())
+			}
+		})
+	}
 }
 
 func TestCatalogDoesNotFollowCredentialRedirects(t *testing.T) {

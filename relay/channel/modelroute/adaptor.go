@@ -97,6 +97,14 @@ func (a *Adaptor) protocolSet(c *gin.Context, info *relaycommon.RelayInfo) []str
 	if set, ok := dto.MatchModelProtocolRules(channelRules, model); ok {
 		return set
 	}
+	if a.channelType == constant.ChannelTypeOpenCodeGo {
+		_, unified := openCodeGoBaseURL(info.ChannelBaseUrl, info.UpstreamModelName)
+		if unified || strings.HasPrefix(model, "gemini-") {
+			// Console serves all text models on each standard API. Keep the
+			// client's protocol unless a channel rule explicitly overrides it.
+			return []string{dto.ModelProtocolChatCompletions, dto.ModelProtocolResponses, dto.ModelProtocolAnthropic}
+		}
+	}
 	builtin := builtinRules(a.channelType)
 	if catalog := a.catalogProtocols(c, info); len(catalog) > 0 {
 		preferred := dto.ModelProtocolChatCompletions
@@ -294,13 +302,31 @@ func (a *Adaptor) GetRequestURL(info *relaycommon.RelayInfo) (string, error) {
 			return "", err
 		}
 	}
-	return EndpointURL(info.ChannelBaseUrl, upstreamPaths[a.upstream]), nil
+	baseURL := info.ChannelBaseUrl
+	path := upstreamPaths[a.upstream]
+	if a.channelType == constant.ChannelTypeOpenCodeGo {
+		var unified bool
+		baseURL, unified = openCodeGoBaseURL(baseURL, info.UpstreamModelName)
+		if unified {
+			if a.upstream == dto.ModelProtocolAnthropic {
+				path = "/anthropic" + path
+			} else {
+				path = "/openai" + path
+			}
+		}
+	}
+	return EndpointURL(baseURL, path), nil
 }
 
 func (a *Adaptor) SetupRequestHeader(c *gin.Context, header *http.Header, info *relaycommon.RelayInfo) error {
 	channel.SetupApiRequestHeader(info, c, header)
+	_, unifiedGo := openCodeGoBaseURL(info.ChannelBaseUrl, info.UpstreamModelName)
 	if a.upstream == dto.ModelProtocolAnthropic {
-		header.Set("x-api-key", info.ApiKey)
+		if a.channelType == constant.ChannelTypeOpenCodeGo && unifiedGo {
+			header.Set("Authorization", "Bearer "+info.ApiKey)
+		} else {
+			header.Set("x-api-key", info.ApiKey)
+		}
 		anthropicVersion := c.Request.Header.Get("anthropic-version")
 		if anthropicVersion == "" {
 			anthropicVersion = "2023-06-01"

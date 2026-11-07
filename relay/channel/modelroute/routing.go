@@ -51,6 +51,7 @@ var openCodeGoModels = []string{
 	"grok-4.7",
 	"grok-4.6",
 	"gpt-5.6-luna",
+	"gemini-4-argon",
 	"glm-5.3-flash",
 	"glm-5.3",
 	"glm-5.2",
@@ -129,23 +130,45 @@ func routingModel(model string) string {
 	return model
 }
 
-// rejectUnsupportedModel rejects models that OpenCode only serves on its
-// provider-specific endpoints: Gemini on the Google SDK endpoint and jev on
-// the System One endpoint.
+// rejectUnsupportedModel keeps provider-only models off unsupported endpoints.
+// Go's unified inference API translates Gemini text requests on standard APIs;
+// legacy Zen still needs the Google endpoint, and jev needs System One.
 func rejectUnsupportedModel(channelType int, model string) error {
 	if !isOpenCode(channelType) {
 		return nil
 	}
 	normalized := routingModel(model)
-	if !strings.HasPrefix(normalized, "gemini-") && !strings.HasPrefix(normalized, "jev-") {
+	if !strings.HasPrefix(normalized, "jev-") &&
+		!(channelType == constant.ChannelTypeOpenCodeZen && strings.HasPrefix(normalized, "gemini-")) {
 		return nil
 	}
 	return types.NewErrorWithStatusCode(
-		fmt.Errorf("model %s is not supported on the OpenCode standard gateway: gemini models require the Google SDK endpoint and jev models require the System One endpoint", model),
+		fmt.Errorf("model %s is not supported on this OpenCode gateway: Gemini requires the Go unified inference API or the Google endpoint, and jev requires the System One endpoint", model),
 		types.ErrorCodeInvalidRequest,
 		http.StatusBadRequest,
 		types.ErrOptionWithSkipRetry(),
 	)
+}
+
+// openCodeGoBaseURL selects the unified API for Gemini on legacy official Go
+// channels. Other models keep their configured URL, and custom hosts are never
+// redirected. A deployment can opt all text models into the unified API by
+// setting its base URL to an /inference/go root.
+func openCodeGoBaseURL(baseURL, model string) (string, bool) {
+	base := strings.TrimRight(strings.TrimSpace(baseURL), "/")
+	parsed, err := url.Parse(base)
+	if err != nil {
+		return base, false
+	}
+	path := strings.TrimSuffix(parsed.Path, "/")
+	if parsed.Scheme == "https" && strings.EqualFold(parsed.Host, openCodeHost) &&
+		parsed.User == nil && parsed.RawQuery == "" && parsed.Fragment == "" &&
+		(path == "/zen/go" || path == "/zen/go/v1") && strings.HasPrefix(routingModel(model), "gemini-") {
+		parsed.Path = "/inference/go"
+		base = parsed.String()
+		path = parsed.Path
+	}
+	return base, path == "/inference/go"
 }
 
 // EndpointURL joins an API path such as /v1/models to a channel base URL,
