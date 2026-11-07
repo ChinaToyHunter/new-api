@@ -82,6 +82,8 @@ type userSessionCacheEntry struct {
 	RevokedAt       int64
 	RevokedReason   string
 	CacheSchema     int
+	CacheExpiresAt  int64
+	CacheMAC        string `json:"-"`
 }
 
 func (session *UserSession) cacheEntry() *userSessionCacheEntry {
@@ -269,6 +271,10 @@ func getUserSessionCache(sid string) (*userSessionCacheEntry, error) {
 	if entry.CacheSchema != userSessionCacheSchema || entry.SID != sid || entry.UserID <= 0 || entry.Version <= 0 || entry.UserAuthVersion <= 0 {
 		return nil, fmt.Errorf("user session cache schema is stale")
 	}
+	mac, err := authCacheMAC(userSessionCacheKey(sid), entry)
+	if err != nil || !validAuthCacheMAC(mac, entry.CacheMAC, entry.CacheExpiresAt) {
+		return nil, fmt.Errorf("user session cache integrity check failed")
+	}
 	if entry.Status != UserSessionStatusActive || entry.RevokedAt != 0 || entry.ExpiresAt <= time.Now().Unix() {
 		return nil, ErrUserSessionInactive
 	}
@@ -288,11 +294,7 @@ func writeUserSessionCache(entry *userSessionCacheEntry, cacheDeadline time.Time
 	now := time.Now()
 	sessionExpiresAt := time.Unix(entry.ExpiresAt, 0)
 	sessionTTL := sessionExpiresAt.Sub(now)
-	var (
-		redisExpirationSeconds int64
-		redisExpirationMillis  int64
-		redisExpirationTTL     int64
-	)
+	var redisExpiration int64
 	if entry.Status == UserSessionStatusActive {
 		if cacheDeadline.IsZero() {
 			return ErrUserSessionInvalid
@@ -313,24 +315,24 @@ func writeUserSessionCache(entry *userSessionCacheEntry, cacheDeadline time.Time
 		}
 		// Leave a one-millisecond margin so Redis' clock and the caller's
 		// observation cannot make the cache outlive the Session.
-		expirationMillis := cacheExpiresAt.UnixMilli() - 1
-		redisExpirationSeconds = expirationMillis / 1000
-		redisExpirationMillis = expirationMillis % 1000
-		if redisExpirationMillis < 0 {
-			redisExpirationSeconds--
-			redisExpirationMillis += 1000
-		}
+		redisExpiration = cacheExpiresAt.UnixMilli() - 1
+		entry.CacheExpiresAt = redisExpiration
 	} else {
 		ttl := min(sessionTTL, time.Duration(userCacheTTLSeconds())*time.Second)
 		if ttl <= 0 {
 			ttl = time.Second
 		}
-		redisExpirationTTL = ttl.Milliseconds()
-		if redisExpirationTTL <= 0 {
-			redisExpirationTTL = 1
+		redisExpiration = ttl.Milliseconds()
+		if redisExpiration <= 0 {
+			redisExpiration = 1
 		}
+		entry.CacheExpiresAt = now.UnixMilli() + redisExpiration
 	}
 	entry.CacheSchema = userSessionCacheSchema
+	mac, err := authCacheMAC(userSessionCacheKey(entry.SID), entry)
+	if err != nil {
+		return err
+	}
 	const script = `
 local current_status = redis.call('HGET', KEYS[1], 'Status')
 local current_version = tonumber(redis.call('HGET', KEYS[1], 'Version') or '0')
@@ -345,29 +347,19 @@ redis.call('HSET', KEYS[1],
   'UserAuthVersion', ARGV[4], 'Status', ARGV[5],
   'LoginMethod', ARGV[6], 'IP', ARGV[7], 'UserAgent', ARGV[8],
   'CreatedAt', ARGV[9], 'LastActiveAt', ARGV[10], 'ExpiresAt', ARGV[11],
-  'RevokedAt', ARGV[12], 'RevokedReason', ARGV[13], 'CacheSchema', ARGV[14])
+  'RevokedAt', ARGV[12], 'RevokedReason', ARGV[13], 'CacheSchema', ARGV[14],
+  'CacheExpiresAt', ARGV[16], 'CacheMAC', ARGV[17])
 if ARGV[5] == 'active' then
-  local expiration_seconds = tonumber(ARGV[15])
-  local expiration_millis = tonumber(ARGV[16])
-  local redis_time = redis.call('TIME')
-  local now_seconds = tonumber(redis_time[1])
-  local now_millis = math.floor(tonumber(redis_time[2]) / 1000)
-  local remaining_milliseconds =
-    (expiration_seconds - now_seconds) * 1000 + expiration_millis - now_millis
-  if remaining_milliseconds <= 0 then
-    redis.call('DEL', KEYS[1])
-    return 1
-  end
-  redis.call('PEXPIRE', KEYS[1], remaining_milliseconds)
+  redis.call('PEXPIREAT', KEYS[1], ARGV[15])
 else
-  redis.call('PEXPIRE', KEYS[1], ARGV[17])
+  redis.call('PEXPIRE', KEYS[1], ARGV[15])
 end
 return 1`
 	result, err := common.RDB.Eval(context.Background(), script, []string{userSessionCacheKey(entry.SID)},
 		entry.SID, entry.UserID, entry.Version, entry.UserAuthVersion, entry.Status,
 		entry.LoginMethod, entry.IP, entry.UserAgent, entry.CreatedAt, entry.LastActiveAt,
-		entry.ExpiresAt, entry.RevokedAt, entry.RevokedReason, entry.CacheSchema,
-		redisExpirationSeconds, redisExpirationMillis, redisExpirationTTL,
+		entry.ExpiresAt, entry.RevokedAt, entry.RevokedReason, entry.CacheSchema, redisExpiration,
+		entry.CacheExpiresAt, mac,
 	).Int()
 	if err != nil {
 		return err

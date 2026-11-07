@@ -201,6 +201,9 @@ func TimeoutDuration(seconds int) time.Duration {
 	return time.Duration(seconds) * time.Second
 }
 
+var RelayHTTP2PingIdleTimeout int // seconds without incoming frames before probing; 0 disables probes
+var RelayHTTP2PingTimeout int     // seconds to wait for a PING acknowledgement
+
 // RelayResponseHeaderTimeout limits how long the relay transport waits for the
 // upstream response headers after the request has been fully written.
 // 0 disables it (previous behaviour: wait forever).
