@@ -1123,3 +1123,58 @@ func TestOAuthBindIgnoresLegacyGitHubUsernames(t *testing.T) {
 		})
 	}
 }
+
+func TestOAuthRegistrationPersistsInviter(t *testing.T) {
+	db, dialect := openTaskDialectDatabase(t, &model.User{}, &model.Log{})
+	oldDB, oldLogDB := model.DB, model.LOG_DB
+	oldMain, oldLog := common.MainDatabaseType(), common.LogDatabaseType()
+	oldRedis, oldRegister := common.RedisEnabled, common.RegisterEnabled
+	oldNew, oldInvitee, oldInviter := common.QuotaForNewUser, common.QuotaForInvitee, common.QuotaForInviter
+	model.DB, model.LOG_DB = db, db
+	common.SetDatabaseTypes(dialect, dialect)
+	common.RedisEnabled, common.RegisterEnabled = false, true
+	common.QuotaForNewUser, common.QuotaForInvitee, common.QuotaForInviter = 0, 0, 0
+	t.Cleanup(func() {
+		model.DB, model.LOG_DB = oldDB, oldLogDB
+		common.SetDatabaseTypes(oldMain, oldLog)
+		common.RedisEnabled, common.RegisterEnabled = oldRedis, oldRegister
+		common.QuotaForNewUser, common.QuotaForInvitee, common.QuotaForInviter = oldNew, oldInvitee, oldInviter
+	})
+	inviter := model.User{Username: "inviter", AffCode: "valid-aff", Status: common.UserStatusEnabled}
+	require.NoError(t, db.Create(&inviter).Error)
+	for _, tc := range []struct {
+		name, code string
+		want       int
+		wantErr    error
+	}{
+		{"valid", "valid-aff", inviter.Id, nil},
+		{"missing", "", 0, nil},
+		// This fork enforces the configured registration invite mode on every
+		// sign-up path, so an unknown code fails instead of being ignored.
+		{"invalid", "unknown-aff", 0, errRegistrationInviteCodeInvalid},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+			provider := &oauth.GitHubProvider{}
+			identity := &oauth.OAuthUser{ProviderUserID: "inviter-test-" + tc.name, Username: "oauth-" + tc.name}
+			created, _, err := findOrCreateOAuthUser(ctx, provider, identity, &oauth.OAuthToken{}, tc.code)
+			if tc.wantErr != nil {
+				require.ErrorIs(t, err, tc.wantErr)
+				var count int64
+				require.NoError(t, db.Model(&model.User{}).Where("github_id = ?", identity.ProviderUserID).Count(&count).Error)
+				assert.Zero(t, count, "a rejected invite code must not create the user")
+				return
+			}
+			require.NoError(t, err)
+			var stored model.User
+			require.NoError(t, db.First(&stored, created.Id).Error)
+			assert.Equal(t, tc.want, stored.InviterId)
+			assert.Equal(t, identity.ProviderUserID, stored.GitHubId)
+			existing, _, err := findOrCreateOAuthUser(ctx, provider, identity, &oauth.OAuthToken{}, "valid-aff")
+			require.NoError(t, err)
+			assert.Equal(t, created.Id, existing.Id)
+			require.NoError(t, db.First(&stored, created.Id).Error)
+			assert.Equal(t, tc.want, stored.InviterId, "login must not reassign the inviter")
+		})
+	}
+}
