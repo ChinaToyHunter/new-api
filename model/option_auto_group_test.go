@@ -83,7 +83,7 @@ func TestLoadOptionsFromDatabaseRejectsInvalidAccountGroupPairAtomically(t *test
 		{Key: "DefaultUserGroup", Value: "missing"},
 	}).Error)
 
-	loadOptionsFromDatabase()
+	require.NoError(t, LoadOptionsFromDatabase())
 
 	assert.Equal(t, []string{"stable"}, setting.GetSortedAccountGroupIDs())
 	assert.Equal(t, "stable", setting.GetDefaultUserGroup())
@@ -162,4 +162,14 @@ func TestValidateOptionValueRejectsInvalidMaxTokenAutoGroups(t *testing.T) {
 		})
 	}
 	require.NoError(t, validateOptionValue("MaxTokenAutoGroups", "999999"))
+}
+
+func TestValidateOptionValueRejectsSystemTaskRetentionBelowOneDay(t *testing.T) {
+	for _, value := range []string{"", "0", "-1", "1.5", "invalid"} {
+		t.Run(value, func(t *testing.T) {
+			assert.Error(t, validateOptionValue("system_task_setting.retention_days", value))
+		})
+	}
+	require.NoError(t, validateOptionValue("system_task_setting.retention_days", "1"))
+	require.NoError(t, validateOptionValue("system_task_setting.retention_days", "30"))
 }

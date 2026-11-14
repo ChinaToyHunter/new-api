@@ -31,6 +31,8 @@ import {
   sideDrawerFormClassName,
   sideDrawerHeaderClassName,
 } from '@/components/drawer-layout'
+import { PasswordInput } from '@/components/password-input'
+import { PasswordStrength } from '@/components/password-strength'
 import { PermissionMatrix } from '@/components/permission-matrix'
 import { Button } from '@/components/ui/button'
 import {
@@ -401,10 +403,17 @@ export function UsersMutateDrawer({
                   render={({ field }) => (
                     <FormItem>
                       <FormLabel>{t('Password')}</FormLabel>
-                      <FormControl>
-                        <Input
+                      <FormControl
+                        describedBy={
+                          !isUpdate || field.value
+                            ? 'user-password-strength'
+                            : undefined
+                        }
+                      >
+                        <PasswordInput
                           {...field}
-                          type='password'
+                          value={field.value ?? ''}
+                          autoComplete='new-password'
                           placeholder={
                             isUpdate
                               ? t('Leave empty to keep unchanged')
@@ -412,6 +421,11 @@ export function UsersMutateDrawer({
                           }
                         />
                       </FormControl>
+                      <PasswordStrength
+                        id='user-password-strength'
+                        value={field.value ?? ''}
+                        quietWhenEmpty={isUpdate}
+                      />
                       <FormMessage />
                     </FormItem>
                   )}

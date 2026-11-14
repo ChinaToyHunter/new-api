@@ -12,10 +12,16 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/i18n"
+	"github.com/QuantumNous/new-api/pkg/jsplugin"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	"github.com/QuantumNous/new-api/relay/requestplugin"
 	"github.com/QuantumNous/new-api/relay/webtools"
 	"github.com/QuantumNous/new-api/relaykit/dto"
+	"github.com/QuantumNous/new-api/relaykit/types"
+	"github.com/QuantumNous/new-api/setting/config"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
+	"github.com/QuantumNous/new-api/setting/request_plugin_setting"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -141,6 +147,71 @@ func useStreamingTimeout(t *testing.T) {
 	previous := constant.StreamingTimeout
 	constant.StreamingTimeout = 30
 	t.Cleanup(func() { constant.StreamingTimeout = previous })
+}
+
+func TestWebToolsRequestPluginsProtectEveryRound(t *testing.T) {
+	require.NoError(t, i18n.Init())
+	plugin, err := jsplugin.DefaultRegistry.Register(`
+export const meta = {apiVersion: 1, key: "rp-web-merge", name: "Web merge", version: "1.0.0", author: {name: "Test"}};
+export function outbound() {
+  return {action: "continue", effects: [{type: "json.patch", ops: [{op: "add", path: "/merge_hook", value: "seen"}]}]};
+}
+export function egress(ctx, req) {
+  if (req.body.merge_hook !== "seen") return {action: "reject", code: "outbound.missing", message: "Outbound hook was skipped"};
+  if (req.body.messages.length > 1) return {action: "reject", code: "second.round", message: "Second round blocked"};
+  return {action: "continue"};
+}`, jsplugin.Options{})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = jsplugin.DefaultRegistry.Unregister(plugin.Meta.Key) })
+	require.NoError(t, config.GlobalConfig.LoadFromDB(map[string]string{request_plugin_setting.InstancesOption: `[{"id":"web-merge","name":"Web merge","plugin":"rp-web-merge","enabled":true,"global":true}]`}))
+	t.Cleanup(func() {
+		require.NoError(t, config.GlobalConfig.LoadFromDB(map[string]string{request_plugin_setting.InstancesOption: "[]"}))
+	})
+
+	for _, protocol := range []string{"chat", "claude"} {
+		t.Run(protocol, func(t *testing.T) {
+			backend := &fakeWebToolsBackend{serves: true}
+			var apiErr *types.NewAPIError
+			var info *relaycommon.RelayInfo
+			var upstream *webToolsUpstream
+			if protocol == "claude" {
+				upstream = newWebToolsUpstream(t, claudeWebToolsReply)
+				_, c := newWebToolsContext("/v1/messages", constant.ChannelTypeAnthropic, upstream.server.URL)
+				_, _, ingressErr := requestplugin.Ingress(c, types.RelayFormatClaude)
+				require.Nil(t, ingressErr)
+				request := newClaudeWebToolsRequest(false)
+				info = relaycommon.GenRelayInfoClaude(c, request)
+				info.InitChannelMeta(c)
+				adaptor := GetAdaptor(info.ApiType)
+				require.NotNil(t, adaptor)
+				adaptor.Init(info)
+				_, apiErr = relayClaudeWithWebTools(c, info, adaptor, request, claudeHostedWebTools(request, backend), backend)
+			} else {
+				upstream = newWebToolsUpstream(t, chatWebToolsReply)
+				_, c := newWebToolsContext("/v1/chat/completions", constant.ChannelTypeOpenAI, upstream.server.URL)
+				_, _, ingressErr := requestplugin.Ingress(c, types.RelayFormatOpenAI)
+				require.Nil(t, ingressErr)
+				request := newChatWebToolsRequest(false)
+				info = relaycommon.GenRelayInfoOpenAI(c, request)
+				info.InitChannelMeta(c)
+				adaptor := GetAdaptor(info.ApiType)
+				require.NotNil(t, adaptor)
+				adaptor.Init(info)
+				_, apiErr = relayChatWithWebTools(c, info, adaptor, request, chatHostedWebTools(request, backend), backend)
+			}
+			require.NotNil(t, apiErr, "the second hosted-tool round must not bypass request plugins")
+			assert.Equal(t, types.ErrorCodeRequestRejected, apiErr.GetErrorCode())
+			assert.Contains(t, apiErr.Error(), "second.round")
+			require.Len(t, upstream.requests, 1, "egress must stop the second request before it is sent")
+			assert.Equal(t, "seen", upstream.requests[0]["merge_hook"])
+			assert.Equal(t, []string{"go release"}, backend.searches)
+			var stages []string
+			for _, step := range info.RequestPluginSteps {
+				stages = append(stages, step.Stage)
+			}
+			assert.Equal(t, []string{"outbound", "egress", "outbound", "egress"}, stages)
+		})
+	}
 }
 
 func TestWebToolsRunEnforcesMaxUses(t *testing.T) {

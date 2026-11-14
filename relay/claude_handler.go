@@ -11,6 +11,7 @@ import (
 	"github.com/QuantumNous/new-api/relay/channel"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relay/helper"
+	"github.com/QuantumNous/new-api/relay/requestplugin"
 	"github.com/QuantumNous/new-api/relay/webtools"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/types"
@@ -81,6 +82,9 @@ func ClaudeHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *typ
 		if err != nil {
 			return types.NewErrorWithStatusCode(err, types.ErrorCodeReadRequestBodyFailed, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
 		}
+		if newAPIError = requestplugin.PassThrough(c, info, storage); newAPIError != nil {
+			return newAPIError
+		}
 		usage, newAPIError = doRelayRequest(c, info, adaptor, common.NewReplayableBodyReader(storage))
 	case webtools.GatewayMode(c, info):
 		backend := webtools.NewBackend(c, info)
@@ -123,12 +127,20 @@ func relayClaudeMessages(c *gin.Context, info *relaycommon.RelayInfo, adaptor ch
 		return nil, types.NewError(err, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
 	}
 
+	jsonData, apiErr := requestplugin.Outbound(c, info, jsonData)
+	if apiErr != nil {
+		return nil, apiErr
+	}
 	// apply param override
 	if len(info.ParamOverride) > 0 {
 		jsonData, err = relaycommon.ApplyParamOverrideWithRelayInfo(jsonData, info)
 		if err != nil {
 			return nil, newAPIErrorFromParamOverride(err)
 		}
+	}
+
+	if apiErr := requestplugin.Egress(c, info, jsonData); apiErr != nil {
+		return nil, apiErr
 	}
 
 	logger.LogDebug(c, "requestBody: %s", jsonData)

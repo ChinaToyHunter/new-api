@@ -147,6 +147,8 @@ func subscriptionPlanCacheKey(id int) string {
 	return strconv.Itoa(id)
 }
 
+// InvalidateSubscriptionPlanCache drops a plan written on this node from the
+// cache and tells the other nodes to drop their copies.
 func InvalidateSubscriptionPlanCache(planId int) {
 	if planId <= 0 {
 		return
@@ -155,6 +157,16 @@ func InvalidateSubscriptionPlanCache(planId int) {
 	_, _ = cache.DeleteMany([]string{subscriptionPlanCacheKey(planId)})
 	infoCache := getSubscriptionPlanInfoCache()
 	_ = infoCache.Purge()
+	BumpSyncTopic(SyncTopicSubscriptionPlans)
+}
+
+// PurgeSubscriptionPlanCache drops every cached plan, so the next reads load
+// them from the database.
+func PurgeSubscriptionPlanCache() error {
+	if err := getSubscriptionPlanCache().Purge(); err != nil {
+		return err
+	}
+	return getSubscriptionPlanInfoCache().Purge()
 }
 
 // Subscription plan

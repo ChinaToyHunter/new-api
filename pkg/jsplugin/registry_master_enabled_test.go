@@ -203,3 +203,53 @@ func TestRegistryOverrideLayerToggleRetainsStateWhenRebuildFails(t *testing.T) {
 	assert.Same(t, beforeActive, registry.ActiveOverridePlugins()["test"])
 	assert.Equal(t, "failed", registry.LastRebuildOutcome().Status)
 }
+
+func TestRegistryIgnoringMasterSwitchStillRespectsOverrideLayer(t *testing.T) {
+	registry := NewRegistry()
+	require.NoError(t, registerTestPlugin(registry, "1.0.0-factory", true))
+	require.NoError(t, registerTestPlugin(registry, "1.0.0-override", false))
+	registry.SetEnabled(false)
+	require.NoError(t, registry.SetOverrideEnabled(false))
+	plugin, ok := registry.GetIgnoringMasterSwitch("test")
+	require.True(t, ok)
+	assert.Equal(t, "1.0.0-factory", plugin.Meta.Version, "bypassing the master switch must not reactivate disabled database overrides")
+
+	require.NoError(t, registry.SetOverrideEnabled(true))
+	plugin, ok = registry.GetIgnoringMasterSwitch("test")
+	require.True(t, ok)
+	assert.Equal(t, "1.0.0-override", plugin.Meta.Version)
+}
+
+func TestRegistryGetIgnoringMasterSwitchKeepsPerPluginSwitch(t *testing.T) {
+	registry := NewRegistry()
+	require.NoError(t, registerTestPlugin(registry, "1.0.0-factory", true))
+
+	registry.SetEnabled(false)
+	_, ok := registry.Get("test")
+	require.False(t, ok)
+	plugin, ok := registry.GetIgnoringMasterSwitch("test")
+	require.True(t, ok)
+	assert.Equal(t, "1.0.0-factory", plugin.Meta.Version)
+
+	require.NoError(t, registerTestPlugin(registry, "1.0.0-override", false))
+	plugin, ok = registry.GetIgnoringMasterSwitch("test")
+	require.True(t, ok)
+	assert.Equal(t, "1.0.0-override", plugin.Meta.Version)
+	require.NoError(t, registry.Unregister("test"))
+	plugin, ok = registry.GetIgnoringMasterSwitch("test")
+	require.True(t, ok)
+	assert.Equal(t, "1.0.0-factory", plugin.Meta.Version)
+
+	registry.SetDisabledFactoryKeys([]string{"test"})
+	_, ok = registry.GetIgnoringMasterSwitch("test")
+	assert.False(t, ok)
+	_, ok = registry.GetIgnoringMasterSwitch("missing")
+	assert.False(t, ok)
+
+	registry.SetDisabledFactoryKeys(nil)
+	registry.SetEnabled(true)
+	plugin, ok = registry.GetIgnoringMasterSwitch("test")
+	require.True(t, ok)
+	assert.Equal(t, "1.0.0-factory", plugin.Meta.Version)
+	assert.Nil(t, registry.switchedOff.Load())
+}
