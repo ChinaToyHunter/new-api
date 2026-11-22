@@ -251,10 +251,24 @@ func observeStreamChoices(info *relaycommon.RelayInfo, data string, seen map[str
 }
 
 func OpenaiHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Response) (*dto.Usage, *types.NewAPIError) {
+	if resp == nil || resp.Body == nil {
+		return nil, types.NewOpenAIError(fmt.Errorf("missing upstream response body"), types.ErrorCodeBadResponseBody, http.StatusBadGateway)
+	}
 	defer service.CloseResponseBodyGracefully(resp)
 
 	var simpleResponse dto.OpenAITextResponse
-	responseBody, err := io.ReadAll(resp.Body)
+	var body io.Reader = resp.Body
+	const maxFakeStreamBody = 16 << 20
+	if info.FakeChatStream {
+		if strings.HasPrefix(strings.ToLower(resp.Header.Get("Content-Type")), "text/event-stream") {
+			return nil, types.NewOpenAIError(fmt.Errorf("upstream returned SSE for a non-streaming chat request"), types.ErrorCodeBadResponseBody, http.StatusBadGateway)
+		}
+		body = io.LimitReader(body, maxFakeStreamBody+1)
+	}
+	responseBody, err := io.ReadAll(body)
+	if info.FakeChatStream && len(responseBody) > maxFakeStreamBody {
+		return nil, types.NewOpenAIError(fmt.Errorf("upstream response exceeds buffered chat size limit"), types.ErrorCodeBadResponseBody, http.StatusBadGateway)
+	}
 	if err != nil {
 		return nil, types.NewOpenAIError(err, types.ErrorCodeReadResponseBodyFailed, http.StatusInternalServerError)
 	}
@@ -281,7 +295,11 @@ func OpenaiHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Respo
 	}
 
 	if oaiError := simpleResponse.GetOpenAIError(); oaiError != nil && oaiError.Type != "" {
-		return nil, types.WithOpenAIError(*oaiError, resp.StatusCode)
+		status := resp.StatusCode
+		if info.FakeChatStream && status == http.StatusOK {
+			status = http.StatusBadGateway
+		}
+		return nil, types.WithOpenAIError(*oaiError, status)
 	}
 
 	info.ObserveResponseModel(simpleResponse.Model)
@@ -324,6 +342,9 @@ func OpenaiHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Respo
 	}
 
 	applyUsagePostProcessing(info, &simpleResponse.Usage, responseBody)
+	if info.FakeChatStream {
+		return writeBufferedChatStream(c, info, simpleResponse, responseBody)
+	}
 
 	switch info.RelayFormat {
 	case types.RelayFormatOpenAI:

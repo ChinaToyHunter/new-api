@@ -93,7 +93,9 @@ type RelayInfo struct {
 	FirstResponseTime time.Time
 	isFirstResponse   bool
 	//SendLastReasoningResponse bool
-	IsStream               bool
+	IsStream bool
+	// FakeChatStream keeps the client streaming while requesting upstream JSON.
+	FakeChatStream         bool
 	IsGeminiBatchEmbedding bool
 	IsPlayground           bool
 	UsePrice               bool
@@ -286,6 +288,7 @@ func (info *RelayInfo) InitChannelMeta(c *gin.Context) {
 	// Per-attempt only. Do not clear StreamStatus, conversion diagnostics,
 	// LastError, or billing accumulators — those are request-scoped.
 	info.SendResponseCount = 0
+	info.FakeChatStream = false
 	info.ClaudeToChatStreamState = nil
 	info.ChatToGeminiStreamState = nil
 	info.RequestPluginHeaders = nil

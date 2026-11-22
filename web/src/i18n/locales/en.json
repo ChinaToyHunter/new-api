@@ -7953,6 +7953,8 @@
     "Web Tools": "Web Tools",
     "Web tools mode": "Web tools mode",
     "When registration creates an initial token, use auto instead of inheriting the account group. Manually created tokens default to auto regardless of this setting.": "When registration creates an initial token, use auto instead of inheriting the account group. Manually created tokens default to auto regardless of this setting.",
-    "Who runs hosted web search and page fetch for requests on this channel.": "Who runs hosted web search and page fetch for requests on this channel."
+    "Who runs hosted web search and page fetch for requests on this channel.": "Who runs hosted web search and page fetch for requests on this channel.",
+    "Enable Fake Streaming": "Enable Fake Streaming",
+    "For OpenAI Chat Completions stream requests, call the upstream without streaming and return the complete response as SSE. Only for Sub2API and New API channels; requires Pass Through Body off and no Responses API conversion.": "For OpenAI Chat Completions stream requests, call the upstream without streaming and return the complete response as SSE. Only for Sub2API and New API channels; requires Pass Through Body off and no Responses API conversion."
   }
 }

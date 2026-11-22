@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/MoeForge/moego/ojson"
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/logger"
@@ -165,6 +166,24 @@ func relayTextRequest(c *gin.Context, info *relaycommon.RelayInfo, adaptor chann
 		}
 	}
 
+	// Only the two gateway adaptors below keep Chat Completions as Chat
+	// Completions. Raw body passthrough and the Responses rewrite stay intact.
+	info.FakeChatStream = info.ChannelSetting.FakeStream && info.IsStream && lo.FromPtrOr(request.Stream, false) &&
+		info.RelayMode == relayconstant.RelayModeChatCompletions && info.RelayFormat == types.RelayFormatOpenAI &&
+		(info.ChannelType == constant.ChannelTypeSub2API || info.ChannelType == constant.ChannelTypeNewAPI) &&
+		!info.ChannelSetting.PassThroughBodyEnabled && !model_setting.GetGlobalSettings().PassThroughRequestEnabled
+	if info.FakeChatStream {
+		// Normalize after all outbound mutations so a parameter override cannot
+		// accidentally put the upstream back on its streaming path.
+		jsonData, err = ojson.SetBytes(jsonData, "stream", false)
+		if err == nil {
+			jsonData, err = ojson.DeleteBytes(jsonData, "stream_options")
+		}
+		if err != nil {
+			return nil, newConvertRequestFailedError(c, info, err)
+		}
+	}
+
 	if apiErr := requestplugin.Egress(c, info, jsonData); apiErr != nil {
 		return nil, apiErr
 	}
@@ -194,6 +213,9 @@ func doRelayRequest(c *gin.Context, info *relaycommon.RelayInfo, adaptor channel
 		httpResp = resp.(*http.Response)
 		info.IsStream = info.IsStream || strings.HasPrefix(httpResp.Header.Get("Content-Type"), "text/event-stream")
 		if httpResp.StatusCode != http.StatusOK {
+			if info.FakeChatStream {
+				defer service.CloseResponseBodyGracefully(httpResp)
+			}
 			newAPIError := service.RelayErrorHandler(c.Request.Context(), httpResp, false)
 			// reset status code 重置状态码
 			service.ResetStatusCode(newAPIError, statusCodeMappingStr)

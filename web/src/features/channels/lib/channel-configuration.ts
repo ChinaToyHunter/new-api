@@ -29,6 +29,7 @@ import {
 } from '../constants'
 import { CHANNEL_TYPE_ADVANCED_CUSTOM } from './advanced-custom'
 import { channelFormSchema, type ChannelFormValues } from './channel-form'
+import { supportsFakeStream } from './fake-stream'
 import { supportsResponsesWebSocket } from './responses-websocket'
 
 export type ChannelProviderTarget =
@@ -69,6 +70,7 @@ const CONFIGURATION_BLOCKS = {
       'thinking_to_content',
       'pass_through_body_enabled',
       'responses_websocket_enabled',
+      'fake_stream_enabled',
       'ollama_openai_chat',
       'model_protocol_rules',
       'web_tools_mode',
@@ -180,6 +182,9 @@ export function getChannelConfigurationState(
       ((supportsResponsesWebSocket(values.type) ||
         (pluginChannel && plugin?.responsesWebsocket === true)) &&
         values.responses_websocket_enabled) ||
+      (supportsFakeStream(values.type) &&
+        values.fake_stream_enabled &&
+        !values.pass_through_body_enabled) ||
       (values.type === CHANNEL_TYPE_OLLAMA && values.ollama_openai_chat) ||
       (MODEL_ROUTED_CHANNEL_TYPES.has(values.type) &&
         hasConfiguredJson(values.model_protocol_rules)) ||

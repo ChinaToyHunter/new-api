@@ -1,6 +1,7 @@
 package channel
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -384,6 +385,23 @@ func DoApiRequest(a Adaptor, c *gin.Context, info *common.RelayInfo, requestBody
 	if err != nil {
 		return nil, fmt.Errorf("new request failed: %w", err)
 	}
+	var cancel context.CancelFunc
+	defer func() {
+		if cancel != nil {
+			cancel()
+		}
+	}()
+	if info.FakeChatStream {
+		// Bound the wait for the whole JSON (including after headers), and
+		// stop the upstream request when the downstream client disconnects.
+		ctx := c.Request.Context()
+		if appconstant.StreamingTimeout > 0 {
+			ctx, cancel = context.WithTimeout(ctx, time.Duration(appconstant.StreamingTimeout)*time.Second)
+		} else {
+			ctx, cancel = context.WithCancel(ctx)
+		}
+		req = req.WithContext(ctx)
+	}
 	ApplyUpstreamBodyMetadata(req, requestBody)
 	headers := req.Header
 	err = a.SetupRequestHeader(c, &headers, info)
@@ -395,6 +413,9 @@ func DoApiRequest(a Adaptor, c *gin.Context, info *common.RelayInfo, requestBody
 	if err = ApplyHeaderOverride(info, c, req); err != nil {
 		return nil, err
 	}
+	if info.FakeChatStream {
+		req.Header.Set("Accept", "application/json")
+	}
 	if err = signUpstreamRequest(a, c, info, req.Method, req.URL, req.Header); err != nil {
 		return nil, err
 	}
@@ -402,7 +423,27 @@ func DoApiRequest(a Adaptor, c *gin.Context, info *common.RelayInfo, requestBody
 	if err != nil {
 		return nil, fmt.Errorf("do request failed: %w", err)
 	}
+	if cancel != nil {
+		var reader io.Reader = resp.Body
+		if resp.StatusCode != http.StatusOK {
+			// The shared error handler buffers the error response too.
+			reader = io.LimitReader(reader, 64<<10)
+		}
+		resp.Body = &cancelOnCloseBody{Reader: reader, Closer: resp.Body, cancel: cancel}
+		cancel = nil // the response body now owns the cancellation function
+	}
 	return resp, nil
+}
+
+type cancelOnCloseBody struct {
+	io.Reader
+	io.Closer
+	cancel context.CancelFunc
+}
+
+func (body *cancelOnCloseBody) Close() error {
+	body.cancel()
+	return body.Closer.Close()
 }
 
 func DoFormRequest(a Adaptor, c *gin.Context, info *common.RelayInfo, requestBody io.Reader) (*http.Response, error) {

@@ -42,6 +42,7 @@ import {
   validateAdvancedCustomConfig,
 } from './advanced-custom'
 import { readTaskExtendPluginKeys } from './channel-plugin-extensions'
+import { supportsFakeStream } from './fake-stream'
 import { supportsResponsesWebSocket } from './responses-websocket'
 
 // ============================================================================
@@ -310,6 +311,7 @@ export const channelFormSchema = z
     tls_insecure_skip_verify: z.boolean().optional(),
     pass_through_body_enabled: z.boolean().optional(),
     responses_websocket_enabled: z.boolean().optional(),
+    fake_stream_enabled: z.boolean().optional(),
     system_prompt: z.string().optional(),
     system_prompt_override: z.boolean().optional(),
     // Type-specific settings (stored in settings JSON)
@@ -526,6 +528,7 @@ export const CHANNEL_FORM_DEFAULT_VALUES: ChannelFormValues = {
   tls_insecure_skip_verify: false,
   pass_through_body_enabled: false,
   responses_websocket_enabled: false,
+  fake_stream_enabled: false,
   system_prompt: '',
   system_prompt_override: false,
   // Type-specific settings
@@ -579,6 +582,7 @@ export function transformChannelToFormDefaults(
     tls_insecure_skip_verify: false,
     pass_through_body_enabled: false,
     responses_websocket_enabled: false,
+    fake_stream_enabled: false,
     system_prompt: '',
     system_prompt_override: false,
   }
@@ -607,6 +611,8 @@ export function transformChannelToFormDefaults(
         pass_through_body_enabled: parsed.pass_through_body_enabled || false,
         responses_websocket_enabled:
           parsed.responses_websocket_enabled === true,
+        fake_stream_enabled:
+          supportsFakeStream(channel.type) && parsed.fake_stream === true,
         system_prompt: parsed.system_prompt || '',
         system_prompt_override: parsed.system_prompt_override || false,
       }
@@ -778,6 +784,10 @@ export function buildSettingJSON(formData: ChannelFormValues): string {
       (supportsResponsesWebSocket(formData.type) ||
         formData.type === CHANNEL_TYPE_TASK_PLUGIN) &&
       formData.responses_websocket_enabled === true,
+    fake_stream:
+      supportsFakeStream(formData.type) &&
+      formData.fake_stream_enabled === true &&
+      formData.pass_through_body_enabled !== true,
     system_prompt: formData.system_prompt || '',
     system_prompt_override: formData.system_prompt_override || false,
   }

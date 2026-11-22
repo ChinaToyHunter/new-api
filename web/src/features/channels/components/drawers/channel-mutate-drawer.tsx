@@ -228,6 +228,7 @@ import {
 } from '../dialogs/passthrough-warning-dialog'
 import { PluginLoginDialog } from '../dialogs/plugin-login-dialog'
 import { StatusCodeRiskDialog } from '../dialogs/status-code-risk-dialog'
+import { FakeStreamSetting } from '../fake-stream-setting'
 import {
   ModelMappingBatchDialog,
   type ModelMappingBatchResult,
@@ -344,6 +345,7 @@ const SENSITIVE_FORM_FIELDS = [
   'tls_insecure_skip_verify',
   'pass_through_body_enabled',
   'responses_websocket_enabled',
+  'fake_stream_enabled',
   'system_prompt',
   'system_prompt_override',
   'allow_service_tier',
@@ -5144,6 +5146,10 @@ export function ChannelMutateDrawer({
                 <ResponsesWebSocketSetting
                   channelType={currentType}
                   supported={responsesWebsocketSupported}
+                  disabled={sensitiveLocked || isSubmitting}
+                />
+                <FakeStreamSetting
+                  channelType={currentType}
                   disabled={sensitiveLocked || isSubmitting}
                 />
                 {formatFields}

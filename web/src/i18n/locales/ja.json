@@ -7953,6 +7953,8 @@
     "Web Tools": "Web ツール",
     "Web tools mode": "Web ツールモード",
     "When registration creates an initial token, use auto instead of inheriting the account group. Manually created tokens default to auto regardless of this setting.": "登録時に初期トークンを生成する場合、アカウントグループを継承せず auto を使用します。手動で作成したトークンは、この設定に関係なくデフォルトで auto を使用します。",
-    "Who runs hosted web search and page fetch for requests on this channel.": "このチャネルのリクエストで、ホスト型の Web 検索とページ取得を誰が実行するかを指定します。"
+    "Who runs hosted web search and page fetch for requests on this channel.": "このチャネルのリクエストで、ホスト型の Web 検索とページ取得を誰が実行するかを指定します。",
+    "Enable Fake Streaming": "疑似ストリーミングを有効化",
+    "For OpenAI Chat Completions stream requests, call the upstream without streaming and return the complete response as SSE. Only for Sub2API and New API channels; requires Pass Through Body off and no Responses API conversion.": "OpenAI Chat Completions のストリーミング要求では、上流を非ストリーミングで呼び出し、完成したレスポンスを SSE で返します。Sub2API と New API のチャンネルのみ対象で、ボディのパースルーがオフで Responses API への変換がない場合に限ります。"
   }
 }

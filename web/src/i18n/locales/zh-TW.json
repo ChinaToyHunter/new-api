@@ -7953,6 +7953,8 @@
     "Web Tools": "聯網工具",
     "Web tools mode": "聯網工具模式",
     "When registration creates an initial token, use auto instead of inheriting the account group. Manually created tokens default to auto regardless of this setting.": "若註冊時產生初始權杖，則使用 auto 分組，而不是繼承帳戶分組。手動建立的權杖無論此設定如何，預設都使用 auto 分組。",
-    "Who runs hosted web search and page fetch for requests on this channel.": "決定由誰為此渠道上的請求執行託管的網頁搜尋與網頁讀取。"
+    "Who runs hosted web search and page fetch for requests on this channel.": "決定由誰為此渠道上的請求執行託管的網頁搜尋與網頁讀取。",
+    "Enable Fake Streaming": "啟用偽串流輸出",
+    "For OpenAI Chat Completions stream requests, call the upstream without streaming and return the complete response as SSE. Only for Sub2API and New API channels; requires Pass Through Body off and no Responses API conversion.": "對於 OpenAI Chat Completions 串流請求，以非串流方式呼叫上游並將完整回應以 SSE 回傳。僅適用於 Sub2API 與 New API 頻道，且必須關閉透傳請求體、不進行 Responses API 轉換。"
   }
 }

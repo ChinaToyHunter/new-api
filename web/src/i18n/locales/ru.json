@@ -7953,6 +7953,8 @@
     "Web Tools": "Веб-инструменты",
     "Web tools mode": "Режим веб-инструментов",
     "When registration creates an initial token, use auto instead of inheriting the account group. Manually created tokens default to auto regardless of this setting.": "Если при регистрации создаётся начальный токен, использовать группу auto вместо наследования группы учётной записи. Созданные вручную токены по умолчанию используют auto независимо от этой настройки.",
-    "Who runs hosted web search and page fetch for requests on this channel.": "Определяет, кто выполняет размещённый веб-поиск и загрузку страниц для запросов этого канала."
+    "Who runs hosted web search and page fetch for requests on this channel.": "Определяет, кто выполняет размещённый веб-поиск и загрузку страниц для запросов этого канала.",
+    "Enable Fake Streaming": "Включить имитацию потоковой передачи",
+    "For OpenAI Chat Completions stream requests, call the upstream without streaming and return the complete response as SSE. Only for Sub2API and New API channels; requires Pass Through Body off and no Responses API conversion.": "Для потоковых запросов OpenAI Chat Completions вызывайте upstream без потоковой передачи и возвращайте полный ответ как SSE. Только для каналов Sub2API и New API; требуется выключенная передача тела запроса и отсутствие преобразования в Responses API."
   }
 }
