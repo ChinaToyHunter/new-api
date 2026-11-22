@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/MoeForge/moego/regexp"
-	"github.com/QuantumNous/new-api/constant"
 	"github.com/gin-gonic/gin"
 )
 
@@ -247,6 +246,9 @@ const (
 	ContextKeyPinnedEndpoint  = "task_plugin_pinned_endpoint"
 	ContextKeyRouteRequest    = "task_plugin_route_request"
 	ContextKeyProtocolRequest = "task_plugin_protocol_request"
+	// ContextKeyEffectiveImageRequest holds the current attempt's image request
+	// after channel overrides. ProtocolRequest remains the immutable retry source.
+	ContextKeyEffectiveImageRequest = "task_plugin_effective_image_request"
 	// ContextKeyRequestBodyText holds, for a plugin that preserves JSON
 	// order, the decoded requestBody as JSON text (json.RawMessage) beside
 	// the Go value in task_request.
@@ -426,7 +428,7 @@ type RoutingGeneration struct {
 	byModel              map[string]*LoadedPlugin
 	modelPlugins         map[string][]*LoadedPlugin
 	canonicalModelByFold map[string]string
-	byChannelType        map[int]*LoadedPlugin
+	byChannelType        map[int][]*LoadedPlugin
 	routeIndex           map[string][]RouteBinding
 	protocolIndex        map[string][]ProtocolBinding
 	plugins              []*LoadedPlugin
@@ -504,12 +506,14 @@ func (g *RoutingGeneration) Get(key string) (*LoadedPlugin, bool) {
 	return plugin, ok
 }
 
-func (g *RoutingGeneration) GetByChannelType(channelType int) (*LoadedPlugin, bool) {
-	if g == nil || channelType == 0 || channelType == constant.ChannelTypeTaskPlugin {
-		return nil, false
+// PluginsByChannelType returns the plugins declaring a built-in channel type
+// in meta.channelTypes, in ascending key order. A channel of that type serves
+// each of them.
+func (g *RoutingGeneration) PluginsByChannelType(channelType int) []*LoadedPlugin {
+	if g == nil {
+		return nil
 	}
-	plugin, ok := g.byChannelType[channelType]
-	return plugin, ok
+	return slices.Clone(g.byChannelType[channelType])
 }
 
 // GetByModel returns the deterministic effective plugin metadata used for a
@@ -1123,7 +1127,7 @@ func buildRoutingGenerationFromPlugins(effective map[string]*LoadedPlugin, numbe
 		byModel:              make(map[string]*LoadedPlugin),
 		modelPlugins:         make(map[string][]*LoadedPlugin),
 		canonicalModelByFold: make(map[string]string),
-		byChannelType:        make(map[int]*LoadedPlugin),
+		byChannelType:        make(map[int][]*LoadedPlugin),
 		routeIndex:           make(map[string][]RouteBinding),
 		protocolIndex:        make(map[string][]ProtocolBinding),
 		plugins:              make([]*LoadedPlugin, 0, len(effective)),
@@ -1157,14 +1161,10 @@ func buildRoutingGenerationFromPlugins(effective map[string]*LoadedPlugin, numbe
 			generation.canonicalModelByFold[folded] = model
 		}
 
+		// Several plugins may declare a channel type; a channel of the type
+		// serves each of them.
 		for _, channelType := range plugin.Meta.ChannelTypes {
-			if channelType == 0 || channelType == constant.ChannelTypeTaskPlugin {
-				continue
-			}
-			if other, exists := generation.byChannelType[channelType]; exists {
-				return nil, fmt.Errorf("plugin %s channelType %d conflicts with plugin %s", plugin.Meta.Key, channelType, other.Meta.Key)
-			}
-			generation.byChannelType[channelType] = plugin
+			generation.byChannelType[channelType] = append(generation.byChannelType[channelType], plugin)
 		}
 
 		// Plugins may share a path shape; the request resolves which one
@@ -1209,8 +1209,8 @@ func buildRoutingGenerationFromPlugins(effective map[string]*LoadedPlugin, numbe
 }
 
 // PreflightRoutingConflict reports whether admitting candidate into the
-// current generation would collide on a channel type, a case-folded model
-// name, or a protocol-model binding. A same-key entry is replaced first so
+// current generation would collide on a case-folded model name or a
+// protocol-model binding. A same-key entry is replaced first so
 // re-uploading a plugin (or overriding a factory built-in) does not
 // self-conflict.
 func PreflightRoutingConflict(current *RoutingGeneration, candidate *LoadedPlugin) error {

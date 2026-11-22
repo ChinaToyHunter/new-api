@@ -17,6 +17,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
@@ -37,6 +38,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/tidwall/gjson"
 	"golang.org/x/image/webp"
+	"golang.org/x/sync/semaphore"
 )
 
 // stagePlugin runs every stage as its instance config says: throw, allocate
@@ -133,7 +135,7 @@ func TestPlanScopeOrder(t *testing.T) {
 	require.NotNil(t, plan)
 	ids := func(stage, group string, bound []string) []string {
 		var scoped []string
-		for _, instance := range plan.scope(stage, group, "gpt-4o", bound) {
+		for _, instance := range plan.scope(stage, group, "gpt-4o", 0, bound) {
 			scoped = append(scoped, instance.ID)
 		}
 		return scoped
@@ -484,12 +486,91 @@ func TestMediaReencode(t *testing.T) {
 	assert.Less(t, len(content.Get("1.source.data").Str), len(large))
 	// A re-encode that is not smaller keeps the image.
 	assert.Equal(t, "data:image/png;base64,"+small, content.Get("2.image_url.url").Str)
+	require.Len(t, outcome.Record, 1)
+	require.Len(t, outcome.Record[0].Media, 2)
+	assert.Equal(t, 0, outcome.Record[0].Media[0].Index)
+	assert.Equal(t, 1, outcome.Record[0].Media[1].Index)
 	// The hook saw placeholders, sizes and, at outbound, dimensions.
 	assert.JSONEq(t, `[
 		{"index":0,"path":"/messages/0/content/0/image_url/url","mimeType":"image/png","bytes":`+strconv.Itoa(len(large)*3/4-strings.Count(large[len(large)-2:], "="))+`,"width":256,"height":256},
 		{"index":1,"path":"/messages/0/content/1/source/data","mimeType":"image/png","bytes":`+strconv.Itoa(len(large)*3/4-strings.Count(large[len(large)-2:], "="))+`,"width":256,"height":256},
 		{"index":2,"path":"/messages/0/content/2/image_url/url","mimeType":"image/png","bytes":`+strconv.Itoa(len(small)*3/4-strings.Count(small[len(small)-2:], "="))+`,"width":1,"height":1}]`,
 		gjson.GetBytes(outcome.Body, "echo_rp.media").Raw)
+
+	// One good image followed by two unreadable ones. Report the first bad
+	// image in request order and discard the whole instance's changes.
+	bad := []byte(`{"images":["data:image/png;base64,` + large + `","data:image/png;base64,AQ==","data:image/png;base64,Ag=="]}`)
+	outcome = NewPlan().Run(context.Background(), Call{Stage: StageOutbound, Body: bad})
+	require.NotNil(t, outcome.Failed)
+	assert.Equal(t, errorMedia, outcome.Failed.Class)
+	assert.Contains(t, outcome.Failed.Detail, "effects[1]: media /images/1 ")
+	assert.Equal(t, bad, outcome.Body)
+	require.Len(t, outcome.Record, 1)
+	assert.Empty(t, outcome.Record[0].Media)
+}
+
+func TestMediaReencodeSharesCapacityAcrossRequests(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+		type imageJob struct {
+			path   string
+			finish chan struct{}
+		}
+		started := make(chan imageJob, 5)
+		pool := imageReencodePool{
+			slots: semaphore.NewWeighted(2),
+			encode: func(ctx context.Context, item inlineMedia, _ requestpatch.Effect) ([]requestpatch.Operation, *relaycommon.RequestPluginMediaChange, error) {
+				job := imageJob{path: item.path, finish: make(chan struct{})}
+				started <- job
+				select {
+				case <-job.finish:
+					return nil, nil, nil
+				case <-ctx.Done():
+					return nil, nil, ctx.Err()
+				}
+			},
+		}
+		submit := func(ctx context.Context, paths ...string) <-chan []mediaReencodeResult {
+			media := make([]inlineMedia, len(paths))
+			effects := make([]requestpatch.Effect, len(paths))
+			for i, path := range paths {
+				media[i].path = path
+				effects[i] = requestpatch.Effect{Type: requestpatch.EffectMediaReencode, Media: i}
+			}
+			done := make(chan []mediaReencodeResult, 1)
+			go func() { done <- pool.reencode(ctx, media, effects) }()
+			synctest.Wait()
+			return done
+		}
+
+		batch := submit(ctx, "/a", "/b", "/c", "/d")
+		require.Len(t, started, 2)
+		first, second := <-started, <-started
+		assert.ElementsMatch(t, []string{"/a", "/b"}, []string{first.path, second.path})
+		single := submit(ctx, "/single")
+		waiting, leave := context.WithCancel(ctx)
+		abandoned := submit(waiting, "/canceled")
+		leave()
+		require.ErrorIs(t, (<-abandoned)[0].err, context.Canceled)
+		require.Empty(t, started)
+
+		close(first.finish)
+		third := <-started
+		require.Equal(t, "/c", third.path)
+		close(second.finish)
+		other := <-started
+		require.Equal(t, "/single", other.path)
+		close(other.finish)
+		require.NoError(t, (<-single)[0].err)
+		last := <-started
+		require.Equal(t, "/d", last.path)
+		close(last.finish)
+		close(third.finish)
+		for _, result := range <-batch {
+			require.NoError(t, result.err)
+		}
+	})
 }
 
 func TestDryRun(t *testing.T) {
@@ -621,7 +702,7 @@ func TestMediaReencodeLosslessWebP(t *testing.T) {
 	source := image.NewNRGBA(image.Rect(0, 0, 192, 128))
 	for y := range 128 {
 		for x := range 192 {
-			source.SetNRGBA(x, y, color.NRGBA{R: uint8(x), G: uint8(y * 2), B: uint8((x + y) % 7 * 30), A: 255})
+			source.SetNRGBA(x, y, color.NRGBA{R: uint8(x), G: uint8(y * 2), B: uint8((x + y) % 7 * 30), A: uint8((x + y) * 3)})
 		}
 	}
 	var buffer bytes.Buffer
@@ -1583,7 +1664,7 @@ func TestPlanScopeModels(t *testing.T) {
 	require.NotNil(t, plan)
 	ids := func(model string) []string {
 		var scoped []string
-		for _, instance := range plan.scope(StageRequest, "default", model, nil) {
+		for _, instance := range plan.scope(StageRequest, "default", model, 0, nil) {
 			scoped = append(scoped, instance.ID)
 		}
 		return scoped
@@ -1593,6 +1674,90 @@ func TestPlanScopeModels(t *testing.T) {
 	assert.Equal(t, []string{"any", "listed"}, ids("gpt-4o@effort:high"))
 	assert.Equal(t, []string{"any"}, ids("gpt-4o-mini"))
 	assert.Equal(t, []string{"any"}, ids("GPT-4O"))
+}
+
+// scopedPlugin declares a scope: requests for gpt-4o or claude sent through
+// OpenAI (1) or Azure (3) channels.
+const scopedPlugin = `export const meta = {apiVersion: 1, key: "rp-scoped", name: "Scoped", version: "1.0.0", author: {name: "Test"},
+  scope: {models: ["gpt-4o", "claude"], channelTypes: [1, 3]}};
+export function ingress() { return {action: "continue"}; }
+export function outbound() { return {action: "continue"}; }`
+
+func TestPlanScopeFollowsThePluginScope(t *testing.T) {
+	plugin, err := jsplugin.DefaultRegistry.Register(scopedPlugin, jsplugin.Options{})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = jsplugin.DefaultRegistry.Unregister(plugin.Meta.Key) })
+	ids := func(stage, model string, channelType int) []string {
+		var scoped []string
+		for _, instance := range NewPlan().scope(stage, "vip", model, channelType, []string{"confirmed"}) {
+			scoped = append(scoped, instance.ID)
+		}
+		return scoped
+	}
+
+	// The confirmed scope runs on every channel of its types and models, a
+	// channel's binding and the hand-placed members aside.
+	setInstances(t, `[{"id":"confirmed","name":"Scoped","plugin":"rp-scoped","enabled":true,"global":true,"groups":["vip"],"models":["x"],
+		"plugin_scope":{"models":["gpt-4o","claude"],"channel_types":[1,3]}}]`)
+	assert.Equal(t, []string{"confirmed"}, ids(StageOutbound, "gpt-4o", 1))
+	assert.Equal(t, []string{"confirmed"}, ids(StageOutbound, "gpt-4o@effort:high", 3))
+	assert.Empty(t, ids(StageOutbound, "gpt-4o", 14), "another channel type")
+	assert.Empty(t, ids(StageOutbound, "gpt-4o-mini", 1), "another model")
+	// Before a channel is selected a scope with channel types does not hold.
+	assert.Empty(t, ids(StageIngress, "gpt-4o", 0))
+
+	// A plugin update that narrows its scope applies at once; one that widens
+	// it reaches nothing new until confirmed again.
+	setInstances(t, `[{"id":"confirmed","name":"Scoped","plugin":"rp-scoped","enabled":true,"plugin_scope":{"models":["claude"],"channel_types":[1]}}]`)
+	assert.Equal(t, []string{"confirmed"}, ids(StageOutbound, "claude", 1))
+	assert.Empty(t, ids(StageOutbound, "gpt-4o", 1), "widened by the plugin, not confirmed")
+	assert.Empty(t, ids(StageOutbound, "claude", 3), "widened by the plugin, not confirmed")
+	setInstances(t, `[{"id":"confirmed","name":"Scoped","plugin":"rp-scoped","enabled":true,"plugin_scope":{"models":["gemini"],"channel_types":[1]}}]`)
+	assert.Empty(t, ids(StageOutbound, "gemini", 1), "the plugin no longer holds the confirmed scope")
+	assert.Empty(t, ids(StageOutbound, "gpt-4o", 1), "widened by the plugin, not confirmed")
+
+	// Each scope matches the request on its own, modifiers included: a
+	// confirmed gpt-4o@effort:high and a declared gpt-4o both hold
+	// gpt-4o@effort:high, and only that.
+	setInstances(t, `[{"id":"confirmed","name":"Scoped","plugin":"rp-scoped","enabled":true,"plugin_scope":{"models":["gpt-4o@effort:high"],"channel_types":[1]}}]`)
+	assert.Equal(t, []string{"confirmed"}, ids(StageOutbound, "gpt-4o@effort:high", 1))
+	assert.Empty(t, ids(StageOutbound, "gpt-4o", 1), "not confirmed")
+	assert.Empty(t, ids(StageOutbound, "gpt-4o@effort:low", 1), "not confirmed")
+
+	// A confirmed scope open on one side keeps the side the plugin now names.
+	setInstances(t, `[{"id":"confirmed","name":"Scoped","plugin":"rp-scoped","enabled":true,"plugin_scope":{"models":["claude"],"channel_types":[]}}]`)
+	assert.Equal(t, []string{"confirmed"}, ids(StageOutbound, "claude", 3))
+	assert.Empty(t, ids(StageOutbound, "claude", 14))
+
+	// On a real attempt the instance runs on its channel type, late, as a
+	// channel's instance does, and not on another type.
+	setInstances(t, `[{"id":"confirmed","name":"Scoped","plugin":"rp-scoped","enabled":true,"plugin_scope":{"models":["claude"],"channel_types":[1]}}]`)
+	for channelType, runs := range map[int]bool{1: true, 14: false} {
+		c := newContext(`{"model":"claude"}`, "default")
+		common.SetContextKey(c, constant.ContextKeyOriginalModel, "claude")
+		steps, _, apiErr := Ingress(c, types.RelayFormatOpenAI)
+		require.Nil(t, apiErr)
+		assert.Empty(t, steps, "the channel is not selected yet")
+		info := newInfo()
+		info.OriginModelName, info.ChannelType = "claude", channelType
+		_, apiErr = Outbound(c, info, []byte(`{"model":"claude-up"}`))
+		require.Nil(t, apiErr)
+		stages := []string{}
+		for _, step := range info.RequestPluginSteps {
+			stages = append(stages, step.Stage)
+		}
+		if runs {
+			assert.Equal(t, []string{StageIngress, StageOutbound}, stages)
+		} else {
+			assert.Empty(t, stages)
+		}
+	}
+
+	// A disabled instance never runs, and a hand-placed one is unchanged.
+	setInstances(t, `[
+		{"id":"confirmed","name":"Scoped","plugin":"rp-scoped","enabled":false,"plugin_scope":{"models":["claude"],"channel_types":[1]}},
+		{"id":"manual","name":"Manual","plugin":"rp-scoped","enabled":true,"global":true}]`)
+	assert.Equal(t, []string{"manual"}, ids(StageOutbound, "gemini", 14))
 }
 
 func TestStageContextCarriesUserAndToken(t *testing.T) {
@@ -1876,7 +2041,7 @@ func TestUnavailablePlugin(t *testing.T) {
 	assert.Equal(t, types.ErrorCodeRequestPluginFailed, apiErr.GetErrorCode())
 	assert.Equal(t, "unavailable", stepOf(t, info.RequestPluginSteps, "gone", StageIngress).Error)
 	for _, stage := range []string{StageEgress, StageReply} {
-		assert.False(t, slices.ContainsFunc(NewPlan().scope(stage, "default", "gpt", []string{"gone"}), func(instance *request_plugin_setting.Instance) bool {
+		assert.False(t, slices.ContainsFunc(NewPlan().scope(stage, "default", "gpt", 0, []string{"gone"}), func(instance *request_plugin_setting.Instance) bool {
 			return instance.ID == "gone"
 		}), "only ingress has it in scope")
 	}

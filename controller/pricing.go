@@ -1,9 +1,8 @@
 package controller
 
 import (
-	"maps"
-
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting"
@@ -22,45 +21,35 @@ func filterPricingByUsableGroups(pricing []model.Pricing, usableGroup map[string
 
 	filtered := make([]model.Pricing, 0, len(pricing))
 	for _, item := range pricing {
-		if common.StringsContains(item.EnableGroup, "all") {
-			filtered = append(filtered, item)
-			continue
-		}
+		// The pricing cache is shared by all viewers.
+		groups := make([]string, 0, len(item.EnableGroup))
 		for _, group := range item.EnableGroup {
-			if _, ok := usableGroup[group]; ok {
-				filtered = append(filtered, item)
-				break
+			if _, ok := usableGroup[group]; ok || group == "all" {
+				groups = append(groups, group)
 			}
+		}
+		if len(groups) > 0 {
+			item.EnableGroup = groups
+			filtered = append(filtered, item)
 		}
 	}
 	return filtered
 }
 
 func GetPricing(c *gin.Context) {
-	pricing := model.GetPricing()
-	userId, exists := c.Get("id")
-	usableGroup := map[string]string{}
-	groupRatio := map[string]float64{}
-	maps.Copy(groupRatio, ratio_setting.GetGroupRatioCopy())
-	var accountGroup string
-	if exists {
-		user, err := model.GetUserCache(userId.(int))
-		if err == nil {
-			accountGroup = user.Group
-			for routeGroup := range groupRatio {
-				ratio, ok := ratio_setting.GetGroupGroupRatio(accountGroup, routeGroup)
-				if ok {
-					groupRatio[routeGroup] = ratio
-				}
-			}
-		}
-	}
-
-	usableGroup = service.GetUserUsableGroups(accountGroup)
-	pricing = filterPricingByUsableGroups(pricing, usableGroup)
-	for routeGroup := range ratio_setting.GetGroupRatioCopy() {
+	accountGroup := common.GetContextKeyString(c, constant.ContextKeyUserGroup)
+	usableGroup := service.GetUserUsableGroups(accountGroup)
+	pricing := filterPricingByUsableGroups(model.GetPricing(), usableGroup)
+	groupRatio := ratio_setting.GetGroupRatioCopy()
+	for routeGroup := range groupRatio {
 		if _, ok := usableGroup[routeGroup]; !ok {
 			delete(groupRatio, routeGroup)
+			continue
+		}
+		if accountGroup != "" {
+			if ratio, ok := ratio_setting.GetGroupGroupRatio(accountGroup, routeGroup); ok {
+				groupRatio[routeGroup] = ratio
+			}
 		}
 	}
 	autoRouteGroups := service.GetUserAutoGroup(accountGroup)
