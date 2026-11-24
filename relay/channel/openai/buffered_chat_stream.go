@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/MoeForge/moego/ojson"
@@ -53,13 +54,27 @@ func writeBufferedChatStream(c *gin.Context, info *relaycommon.RelayInfo, respon
 	if len(response.Choices) == 0 || len(rawChoices) != len(response.Choices) {
 		return nil, types.NewOpenAIError(fmt.Errorf("upstream chat response has no valid choices"), types.ErrorCodeBadResponseBody, http.StatusBadGateway)
 	}
+	missingFinishReason := false
 	for i, choice := range response.Choices {
-		if choice.FinishReason == "" {
-			return nil, types.NewOpenAIError(fmt.Errorf("upstream chat choice has no finish reason"), types.ErrorCodeBadResponseBody, http.StatusBadGateway)
-		}
 		var delta map[string]json.RawMessage
 		if err := common.UnmarshalJsonStr(rawChoices[i].Get("message").Raw, &delta); err != nil || delta == nil {
 			return nil, types.NewOpenAIError(fmt.Errorf("upstream chat choice has no valid message"), types.ErrorCodeBadResponseBody, http.StatusBadGateway)
+		}
+		reason := choice.FinishReason
+		if strings.TrimSpace(reason) == "" {
+			// Keep usable text without guessing why generation stopped. Do not
+			// deliver a potentially incomplete tool call to an agent client.
+			toolCalls := ojson.ParseBytes(delta["tool_calls"])
+			hasTools := toolCalls.Exists() && toolCalls.Type != ojson.Null && (!toolCalls.IsArray() || len(toolCalls.Array()) > 0)
+			legacyCall := delta["function_call"]
+			// The Chat delta formatter expects a string, not content parts.
+			text, _ := choice.Message.Content.(string)
+			if strings.TrimSpace(text) == "" || hasTools || (len(legacyCall) > 0 && string(legacyCall) != "null") {
+				return nil, types.NewOpenAIError(fmt.Errorf("upstream chat choice has no finish reason"), types.ErrorCodeBadResponseBody, http.StatusBadGateway)
+			}
+			missingFinishReason = true
+		} else {
+			finishFrame.Choices = append(finishFrame.Choices, choiceDelta{Index: choice.Index, Delta: map[string]json.RawMessage{}, FinishReason: &reason})
 		}
 		role := delta["role"]
 		if len(role) == 0 || string(role) == "null" {
@@ -99,7 +114,6 @@ func writeBufferedChatStream(c *gin.Context, info *relaycommon.RelayInfo, respon
 			logprobs = "null"
 		}
 		messageFrame.Choices = append(messageFrame.Choices, choiceDelta{Index: choice.Index, Delta: delta, Logprobs: json.RawMessage(logprobs)})
-		finishFrame.Choices = append(finishFrame.Choices, choiceDelta{Index: choice.Index, Delta: map[string]json.RawMessage{}, FinishReason: &choice.FinishReason})
 	}
 
 	frames := make([]chunk, 0, 5)
@@ -107,7 +121,10 @@ func writeBufferedChatStream(c *gin.Context, info *relaycommon.RelayInfo, respon
 	if len(reasoningFrame.Choices) > 0 {
 		frames = append(frames, reasoningFrame)
 	}
-	frames = append(frames, messageFrame, finishFrame)
+	frames = append(frames, messageFrame)
+	if len(finishFrame.Choices) > 0 {
+		frames = append(frames, finishFrame)
+	}
 	if info.ShouldIncludeUsage {
 		base.Choices = []choiceDelta{}
 		base.Usage = &response.Usage
@@ -138,7 +155,11 @@ func writeBufferedChatStream(c *gin.Context, info *relaycommon.RelayInfo, respon
 		info.StreamStatus.SetEndReason(relaycommon.StreamEndReasonClientGone, err)
 		return &response.Usage, nil
 	}
-	info.StreamStatus.MarkCompleted()
+	if missingFinishReason {
+		info.StreamStatus.MarkIncomplete("missing_finish_reason")
+	} else {
+		info.StreamStatus.MarkCompleted()
+	}
 	info.StreamStatus.SetEndReason(relaycommon.StreamEndReasonDone, nil)
 	return &response.Usage, nil
 }

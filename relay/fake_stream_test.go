@@ -29,11 +29,19 @@ func TestChannelFakeStreamChatCompletions(t *testing.T) {
 		settings                                                 string
 		channelType, status                                      int
 		stream, includeUsage, fakeStream, badBody, unexpectedSSE bool
+		partialText                                              string
+		knownFinish                                              string
 	}{
 		{name: "buffered request preserves tools, thinking, choices, stop reasons and usage", reply: result, settings: `{"fake_stream":true}`, channelType: constant.ChannelTypeSub2API, stream: true, includeUsage: true, fakeStream: true},
 		{name: "client can omit the usage frame without changing settlement", reply: result, settings: `{"fake_stream":true}`, channelType: constant.ChannelTypeNewAPI, stream: true, fakeStream: true},
 		{name: "invalid JSON cannot produce success frames", reply: `{"choices":[`, settings: `{"fake_stream":true}`, channelType: constant.ChannelTypeSub2API, stream: true, fakeStream: true, badBody: true},
-		{name: "missing finish reason cannot produce success frames", reply: `{"choices":[{"index":0,"message":{"content":"hi"}}]}`, settings: `{"fake_stream":true}`, channelType: constant.ChannelTypeSub2API, stream: true, fakeStream: true, badBody: true, status: http.StatusBadGateway},
+		{name: "missing finish reason preserves visible text", reply: `{"choices":[{"index":0,"message":{"content":"hi"}}],"usage":{"prompt_tokens":8,"completion_tokens":7,"total_tokens":15}}`, settings: `{"fake_stream":true}`, channelType: constant.ChannelTypeSub2API, stream: true, includeUsage: true, fakeStream: true, partialText: "hi"},
+		{name: "null finish reason does not hide another choice's finish reason", reply: `{"choices":[{"index":0,"finish_reason":null,"message":{"content":"partial","tool_calls":null}},{"index":1,"finish_reason":"length","message":{"content":"limit"}}],"usage":{"prompt_tokens":8,"completion_tokens":7,"total_tokens":15}}`, settings: `{"fake_stream":true}`, channelType: constant.ChannelTypeSub2API, stream: true, fakeStream: true, partialText: "partial", knownFinish: "length"},
+		{name: "empty text and missing finish reason still fail", reply: `{"choices":[{"index":0,"message":{"content":"  \n"}}]}`, settings: `{"fake_stream":true}`, channelType: constant.ChannelTypeSub2API, stream: true, fakeStream: true, badBody: true, status: http.StatusBadGateway},
+		{name: "reasoning alone without finish reason still fails", reply: `{"choices":[{"index":0,"message":{"content":null,"reasoning_content":"thinking"},"finish_reason":""}]}`, settings: `{"fake_stream":true,"thinking_to_content":true}`, channelType: constant.ChannelTypeSub2API, stream: true, fakeStream: true, badBody: true, status: http.StatusBadGateway},
+		{name: "tool call without finish reason is never sent even with text", reply: `{"choices":[{"index":0,"message":{"content":"will look it up","tool_calls":[{"id":"call_1","type":"function","function":{"name":"lookup","arguments":"{}"}}]},"finish_reason":null}]}`, settings: `{"fake_stream":true}`, channelType: constant.ChannelTypeSub2API, stream: true, fakeStream: true, badBody: true, status: http.StatusBadGateway},
+		{name: "malformed tool calls without finish reason still fail", reply: `{"choices":[{"index":0,"message":{"content":"partial","tool_calls":{}},"finish_reason":null}]}`, settings: `{"fake_stream":true}`, channelType: constant.ChannelTypeSub2API, stream: true, fakeStream: true, badBody: true, status: http.StatusBadGateway},
+		{name: "legacy function call without finish reason is never sent", reply: `{"choices":[{"index":0,"message":{"content":"will look it up","function_call":{"name":"lookup","arguments":"{}"}}}]}`, settings: `{"fake_stream":true}`, channelType: constant.ChannelTypeSub2API, stream: true, fakeStream: true, badBody: true, status: http.StatusBadGateway},
 		{name: "upstream HTTP errors remain errors", reply: `{"error":{"type":"rate_limit","message":"too many requests"}}`, settings: `{"fake_stream":true}`, channelType: constant.ChannelTypeSub2API, stream: true, fakeStream: true, badBody: true, status: http.StatusTooManyRequests},
 		{name: "error envelope inside HTTP 200 does not become success", reply: `{"error":{"type":"api_error","message":"provider failed"}}`, settings: `{"fake_stream":true}`, channelType: constant.ChannelTypeSub2API, stream: true, fakeStream: true, badBody: true, status: http.StatusBadGateway},
 		{name: "upstream cannot silently switch back to SSE", settings: `{"fake_stream":true}`, channelType: constant.ChannelTypeSub2API, stream: true, fakeStream: true, badBody: true, unexpectedSSE: true, status: http.StatusBadGateway},
@@ -123,9 +131,33 @@ func TestChannelFakeStreamChatCompletions(t *testing.T) {
 				return
 			}
 			require.Equal(t, 15, usage.TotalTokens)
-			assert.Equal(t, 2, usage.PromptTokensDetails.CachedTokens)
 			frames := strings.Split(strings.TrimSpace(w.Body.String()), "\n\n")
 			require.Equal(t, "data: [DONE]", frames[len(frames)-1])
+			if tc.partialText != "" {
+				var finishReasons []string
+				var text strings.Builder
+				for _, frame := range frames[:len(frames)-1] {
+					for _, choice := range ojson.Get(strings.TrimPrefix(frame, "data: "), "choices").Array() {
+						if choice.Get("index").Int() == 0 {
+							assert.Equal(t, "null", choice.Get("finish_reason").Raw)
+							text.WriteString(choice.Get("delta.content").Str)
+						} else if reason := choice.Get("finish_reason").Str; reason != "" {
+							finishReasons = append(finishReasons, reason)
+						}
+					}
+				}
+				assert.Equal(t, tc.partialText, text.String())
+				if tc.knownFinish != "" {
+					assert.Equal(t, []string{tc.knownFinish}, finishReasons)
+				}
+				outcome := info.StreamStatus.OutcomeSnapshot()
+				assert.Equal(t, relaycommon.StreamEndReasonDone, outcome.EndReason)
+				assert.Equal(t, relaycommon.ResponseOutcomeIncomplete, outcome.Response)
+				assert.Equal(t, "missing_finish_reason", outcome.IncompleteReason)
+				assert.Equal(t, tc.includeUsage, strings.Contains(w.Body.String(), `"total_tokens":15`))
+				return
+			}
+			assert.Equal(t, 2, usage.PromptTokensDetails.CachedTokens)
 			seen := map[string]string{}
 			for _, frame := range frames[:len(frames)-1] {
 				chunk := strings.TrimPrefix(frame, "data: ")
